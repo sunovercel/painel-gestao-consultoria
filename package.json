@@ -1,0 +1,7 @@
+{
+  "name": "painel-gestao-consultoria",
+  "private": true,
+  "dependencies": {
+    "snowflake-sdk": "^1.15.0"
+  }
+}

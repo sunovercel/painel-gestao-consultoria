@@ -1,0 +1,74 @@
+name: Daily Commercial Summary
+
+on:
+  schedule:
+    # GitHub Actions tem atraso variável (~1h30 a 7h+) nos triggers `schedule`.
+    # Para garantir entrega mesmo em dias de atraso grande, há 3 tentativas
+    # espaçadas; o job "guard" pula as tentativas seguintes se uma anterior
+    # já enviou o e-mail de hoje com sucesso.
+    - cron: '43 8 * * *'   # 05:43 BRT — tentativa 1 (mira ~09h BRT)
+    - cron: '43 10 * * *'  # 07:43 BRT — tentativa 2 (retry)
+    - cron: '43 12 * * *'  # 09:43 BRT — tentativa 3 (retry final)
+  workflow_dispatch:         # allows manual runs for testing
+    inputs:
+      yesterday_override:
+        description: 'Date to use as "yesterday" (YYYY-MM-DD). Leave blank for actual yesterday.'
+        required: false
+        default: ''
+
+jobs:
+  guard:
+    # Só pula tentativas em runs agendados; workflow_dispatch sempre envia.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      should_send: ${{ steps.check.outputs.should_send }}
+    steps:
+      - name: Check if today's email was already sent
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          ALREADY_SENT=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-email.yml/runs?event=schedule&status=success&per_page=10" \
+            | jq -r --arg today "$TODAY" '[.workflow_runs[] | select(.created_at | startswith($today))] | length > 0')
+          echo "Already sent today: $ALREADY_SENT"
+          if [ "$ALREADY_SENT" = "true" ]; then
+            echo "should_send=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_send=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  send-email:
+    needs: guard
+    if: |
+      always() &&
+      (needs.guard.result == 'skipped' || needs.guard.outputs.should_send == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: scripts
+
+      - name: Send daily summary email
+        run: node daily-email.js
+        working-directory: scripts
+        env:
+          ANTHROPIC_KEY:       ${{ secrets.ANTHROPIC_KEY }}
+          SENDGRID_API_KEY:    ${{ secrets.SENDGRID_API_KEY }}
+          EMAIL_FROM:          ${{ secrets.EMAIL_FROM }}
+          EMAIL_RECIPIENTS:    ${{ secrets.EMAIL_RECIPIENTS }}
+          YESTERDAY_OVERRIDE:  ${{ github.event.inputs.yesterday_override }}

@@ -1,0 +1,12 @@
+{
+  "name": "suno-daily-email",
+  "version": "1.0.0",
+  "description": "Daily commercial summary email for Suno Consultoria",
+  "main": "daily-email.js",
+  "scripts": {
+    "start": "node daily-email.js"
+  },
+  "dependencies": {
+    "papaparse": "^5.4.1"
+  }
+}
