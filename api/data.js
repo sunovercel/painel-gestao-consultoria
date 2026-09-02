@@ -7,11 +7,20 @@
 // painel (filtros, funil, cohort, forecast, pivot) não precisa mudar.
 //
 // Limitações conhecidas (ver sql/README.md no repo Projeto Dados Snow):
-//  - "reunioes" é APROXIMADA: não existe objeto de Task/Event/Meeting no
-//    Salesforce (nem no Data Cloud share, nem na base legada via Airbyte).
-//    Cada linha aqui é 1 negócio com indício de reunião (StatusReuniao_c__c,
-//    BotConfirmou, Data1ReuniaoQualificacao), não 1 reunião real -- não há
-//    "Tipo de chamada e reunião" real, nem múltiplas reuniões por negócio.
+//  - "reunioes" combina duas fontes por causa de um corte real de dados:
+//    (a) ANTES de 2026-05-29 (quando o sinal de reunião no Salesforce
+//    começa a existir de fato): FATO_REUNIAO_HIST_PLANILHA, carga única
+//    (2026-09-01) com grão real de reunião (Reunião ID/Tipo de
+//    chamada/Resultado), a partir da planilha original que alimentava o
+//    painel antes desta migração (mesma fonte Salesforce, caminho de
+//    sincronização diferente -- não é HubSpot).
+//    (b) A PARTIR de 2026-05-29: aproximação via Salesforce -- não existe
+//    objeto de Task/Event/Meeting no Salesforce (nem no Data Cloud share,
+//    nem na base legada via Airbyte). Cada linha aqui é 1 negócio com
+//    indício de reunião (StatusReuniao_c__c, BotConfirmou,
+//    Data1ReuniaoQualificacao), não 1 reunião real -- não há "Tipo de
+//    chamada e reunião" real, nem múltiplas reuniões por negócio.
+//    Ver sql/README.md no repo Projeto Dados Snow para o achado completo.
 //  - "prioridade" não existe em nenhum objeto do Salesforce -- Forecast
 //    roda sem segmentação por prioridade (tudo cai em "(Sem prioridade)").
 //  - Os ~7.699 negócios com ETAPA_FUNIL = 'Lead' podem estar com EMAIL/
@@ -111,6 +120,23 @@ function mapReuniaoAproximada(r) {
   };
 }
 
+function mapReuniaoHistorica(r) {
+  return {
+    negocio_id: r.NEGOCIO_ID,
+    email: str(r.EMAIL),
+    funil: str(r.FUNIL),
+    estrategia: str(r.ESTRATEGIA),
+    deal_utm_source: str(r.UTM_SOURCE),
+    fonte_original_pipe: str(r.FONTE_AQUISICAO),
+    canal_originador: str(r.CANAL),
+    sdr_responsavel: str(r.SDR_RESPONSAVEL),
+    closer_responsavel: str(r.CLOSER_RESPONSAVEL),
+    data_da_atividade: str(r.DATA_ATIVIDADE || r.DATA_CRIACAO),
+    status_reuniao: str(r.STATUS_REUNIAO),
+    tipo_reuniao: str(r.TIPO_REUNIAO) || 'Reunião',
+  };
+}
+
 function mapTombamento(r) {
   return {
     nome: str(r.NOME),
@@ -138,9 +164,19 @@ async function loadFromSnowflake() {
   const leads = negocios; // "Leads" = todo negócio já captado, independente da etapa atual
   const vendas = negocioRows.filter(r => r.STAGE_NAME === 'Ganho').map(mapNegocio);
   const negociacao = negocioRows.filter(r => r.ETAPA_FUNIL === 'Opportunity').map(mapNegocio);
-  const reunioes = negocioRows
+  const reunioesAproximadas = negocioRows
     .filter(r => r.STATUS_REUNIAO || r.BOT_CONFIRMOU_REUNIAO || r.DATA_1_REUNIAO_QUALIFICACAO)
     .map(mapReuniaoAproximada);
+
+  const reuniaoHistRows = await query(`
+    SELECT
+      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL,
+      SDR_RESPONSAVEL, CLOSER_RESPONSAVEL, STATUS_REUNIAO, TIPO_REUNIAO,
+      TO_VARCHAR(DATA_ATIVIDADE, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_ATIVIDADE,
+      TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_CRIACAO
+    FROM FATO_REUNIAO_HIST_PLANILHA
+  `);
+  const reunioes = [...reuniaoHistRows.map(mapReuniaoHistorica), ...reunioesAproximadas];
 
   const metaRows = await query(`
     SELECT
