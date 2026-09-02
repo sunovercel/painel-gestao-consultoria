@@ -20,6 +20,16 @@
 
 import snowflake from 'snowflake-sdk';
 
+// Fix conhecido: em serverless (Vercel/Lambda), o filesystem é só-leitura
+// exceto /tmp. O snowflake-sdk tenta escrever cache de OCSP/credenciais em
+// pastas baseadas em HOME (ex.: ~/.cache/snowflake), que não existem/não são
+// graváveis nesse ambiente -- isso derruba a conexão sem lançar um erro que
+// chegue ao nosso try/catch. Redireciona pra /tmp, que é gravável.
+process.env.HOME = process.env.HOME || '/tmp';
+process.env.SF_TEMPORARY_CREDENTIAL_CACHE_DIR = '/tmp';
+process.env.SF_OCSP_RESPONSE_CACHE_DIR = '/tmp';
+snowflake.configure({ ocspFailOpen: true });
+
 let cachedConnection = null;
 let cache = null;
 let cacheAt = 0;
