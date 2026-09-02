@@ -226,6 +226,25 @@ tr:hover td{background:#FAFAFA}
 .view-filter-bar .filter-label{color:var(--red)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
 
+/* LOGIN */
+.login-screen{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center}
+.login-screen.hidden{display:none}
+.login-box{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-lg);padding:40px 36px;width:100%;max-width:380px;display:flex;flex-direction:column;align-items:center;gap:0}
+.login-logo{display:flex;align-items:center;margin-bottom:8px}
+.login-logo .paren{color:var(--red);font-weight:800;font-size:28px;line-height:1}
+.login-logo .brand{color:#2D2D2D;font-weight:700;letter-spacing:3px;margin:0 6px;font-size:17px}
+.login-subtitle{font-size:13px;color:var(--text-muted);margin-bottom:32px;text-align:center}
+.login-field{width:100%;display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.login-field label{font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px}
+.login-field input{height:40px;padding:0 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s;width:100%;background:#fff}
+.login-field input:focus{border-color:var(--red);box-shadow:0 0 0 3px rgba(200,37,38,.08)}
+.login-error{font-size:12px;color:var(--red);background:var(--red-light);border:1px solid rgba(200,37,38,.2);border-radius:6px;padding:8px 12px;width:100%;text-align:center;display:none;margin-bottom:4px}
+.login-error.visible{display:block}
+.btn-login{width:100%;height:42px;background:var(--red);color:#fff;border:none;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s;margin-top:6px;letter-spacing:.3px}
+.btn-login:hover{background:var(--red-hover)}
+.btn-login:disabled{opacity:.55;cursor:not-allowed}
+.login-warning{font-size:11px;color:var(--text-faint);margin-top:20px;text-align:center;line-height:1.5}
+
 /* IA CHAT */
 .ia-msg{display:flex;flex-direction:column;gap:4px;max-width:88%}
 .ia-msg.user{align-self:flex-end;align-items:flex-end}
@@ -246,6 +265,25 @@ tr:hover td{background:#FAFAFA}
 </style>
 </head>
 <body>
+
+<!-- LOGIN (senha única, versão de homologação) -->
+<div class="login-screen" id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <span class="paren">(</span>
+      <span class="brand">SUNO</span>
+      <span class="paren">)</span>
+    </div>
+    <div class="login-subtitle">Dashboard Estratégico Comercial — Homologação</div>
+    <div class="login-field">
+      <label for="login-pass">Senha de acesso</label>
+      <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <div class="login-error" id="login-error">Senha incorreta.</div>
+    <button class="btn-login" id="btn-login">Entrar</button>
+    <p class="login-warning">⚠ Acesso restrito à homologação. Não compartilhe a senha fora do time.</p>
+  </div>
+</div>
 
 <header class="header">
   <div class="header-logo">
@@ -750,6 +788,52 @@ tr:hover td{background:#FAFAFA}
 // ================================================================
 const DATA_ENDPOINT = '/api/data'; // Snowflake (ANALYTICS.CONSULTORIA) via serverless function -- ver api/data.js
 
+// ================================================================
+// AUTH — senha única de homologação (SITE_PASSWORD na Vercel).
+// Protege tela E endpoint: a senha vai no header x-site-password em toda
+// chamada a /api/data (ver loadData()), não é só um gate visual.
+// ================================================================
+const SITE_PASSWORD_KEY = 'suno_dash_pwd';
+
+async function checkSitePassword(pwd) {
+  try {
+    const resp = await fetch(DATA_ENDPOINT, { headers: { 'x-site-password': pwd } });
+    return resp.status !== 401;
+  } catch (e) {
+    return false; // erro de rede não deve travar o usuário na tela de login sem feedback
+  }
+}
+
+function showLoginScreen() {
+  document.getElementById('login-screen').classList.remove('hidden');
+  const pass = document.getElementById('login-pass');
+  const err = document.getElementById('login-error');
+  const btn = document.getElementById('btn-login');
+  const loginFn = async () => {
+    btn.disabled = true;
+    const ok = await checkSitePassword(pass.value);
+    btn.disabled = false;
+    if (ok) {
+      sessionStorage.setItem(SITE_PASSWORD_KEY, pass.value);
+      document.getElementById('login-screen').classList.add('hidden');
+      init();
+    } else {
+      err.classList.add('visible');
+      pass.value = '';
+      pass.focus();
+    }
+  };
+  btn.addEventListener('click', loginFn);
+  pass.addEventListener('keydown', e => { if (e.key === 'Enter') loginFn(); });
+  pass.focus();
+}
+
+function setupAuth() {
+  const stored = sessionStorage.getItem(SITE_PASSWORD_KEY);
+  if (stored) { init(); return; } // loadData() revalida no primeiro fetch; se a senha mudou, volta pro login
+  showLoginScreen();
+}
+
 const PALETTE      = ['#C82526','#2D2D2D','#d97706','#7c3aed','#0891b2','#16a34a','#ea580c','#9333ea','#65a30d','#db2777'];
 const FUNNEL_CLR   = ['#2D2D2D','#6B3333','#C82526','#991B1B','#5A0D10'];
 
@@ -1075,7 +1159,13 @@ function addMonths(k, n) {
 async function loadData() {
   setStatus('loading', 'Carregando dados do Snowflake...');
   try {
-    const resp = await fetch(DATA_ENDPOINT);
+    const pwd = sessionStorage.getItem(SITE_PASSWORD_KEY) || '';
+    const resp = await fetch(DATA_ENDPOINT, { headers: { 'x-site-password': pwd } });
+    if (resp.status === 401) {
+      sessionStorage.removeItem(SITE_PASSWORD_KEY);
+      location.reload(); // senha mudou/expirou -- volta pra tela de login
+      return false;
+    }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     RAW.leads         = data.leads        || [];
@@ -3697,7 +3787,7 @@ async function refreshData() {
   btn.textContent = '↻ Atualizar';
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', setupAuth);
 </script>
 </body>
 </html>

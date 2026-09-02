@@ -167,6 +167,14 @@ async function loadFromSnowflake() {
 }
 
 export default async function handler(req, res) {
+  // Versão de homologação: acesso restrito por senha única (SITE_PASSWORD
+  // na Vercel). Protege o endpoint em si, não só a tela do painel -- sem
+  // isso, quem descobrisse a URL do endpoint pulava a tela de login.
+  const sitePassword = process.env.SITE_PASSWORD;
+  if (sitePassword && req.headers['x-site-password'] !== sitePassword) {
+    return res.status(401).json({ error: 'Senha inválida ou ausente.' });
+  }
+
   try {
     const now = Date.now();
     if (!cache || now - cacheAt > CACHE_TTL_MS) {
