@@ -122,6 +122,7 @@ function mapReuniaoAproximada(r) {
     canal_originador: str(r.CANAL),
     sdr_responsavel: str(r.SDR_RESPONSAVEL),
     closer_responsavel: str(r.CLOSER_RESPONSAVEL),
+    data_criacao: str(r.DATA_CRIACAO),
     data_da_atividade: str(r.DATA_1_REUNIAO_QUALIFICACAO || r.DATA_CRIACAO),
     status_reuniao: str(r.STATUS_REUNIAO) || (r.BOT_CONFIRMOU_REUNIAO ? 'Concluído' : ''),
     tipo_reuniao: 'Reunião', // aproximado -- não existe "Tipo de chamada e reunião" real na fonte
@@ -139,6 +140,7 @@ function mapReuniaoHistorica(r) {
     canal_originador: str(r.CANAL),
     sdr_responsavel: str(r.SDR_RESPONSAVEL),
     closer_responsavel: str(r.CLOSER_RESPONSAVEL),
+    data_criacao: str(r.DATA_CRIACAO),
     data_da_atividade: str(r.DATA_ATIVIDADE || r.DATA_CRIACAO),
     status_reuniao: str(r.STATUS_REUNIAO),
     tipo_reuniao: str(r.TIPO_REUNIAO) || 'Reunião',
