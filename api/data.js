@@ -6,6 +6,14 @@
 // canônicas que normalizeRow()/COL_ALIASES usavam, então o resto do
 // painel (filtros, funil, cohort, forecast, pivot) não precisa mudar.
 //
+// Leads/Vendas/Negociação vêm de VW_FATO_NEGOCIO_COMBINADO (2026-09-02),
+// não de FATO_NEGOCIO puro -- Consultoria só passou a existir de fato no
+// Salesforce a partir de 2026-07-14 (antes disso o pouco que aparecia em
+// FATO_NEGOCIO era ruído). A view combina Salesforce (>= corte) com
+// FATO_NEGOCIO_HIST_HUBSPOT (< corte, carga única a partir de
+// RAW.CONSULTORIA_HUBSPOT.FUNIL_ADVISORY). Ver sql/007_load_negocio_historico_hubspot.sql
+// e sql/README.md no repo Projeto Dados Snow.
+//
 // Limitações conhecidas (ver sql/README.md no repo Projeto Dados Snow):
 //  - "reunioes" combina duas fontes por causa de um corte real de dados:
 //    (a) ANTES de 2026-05-29 (quando o sinal de reunião no Salesforce
@@ -157,7 +165,7 @@ async function loadFromSnowflake() {
       TO_VARCHAR(DATA_CONTRATACAO, 'YYYY-MM-DD') AS DATA_CONTRATACAO,
       SDR_RESPONSAVEL, CLOSER_RESPONSAVEL, STATUS_REUNIAO, BOT_CONFIRMOU_REUNIAO,
       TO_VARCHAR(DATA_1_REUNIAO_QUALIFICACAO, 'YYYY-MM-DD') AS DATA_1_REUNIAO_QUALIFICACAO
-    FROM FATO_NEGOCIO
+    FROM VW_FATO_NEGOCIO_COMBINADO
   `);
 
   const negocios = negocioRows.map(mapNegocio);
