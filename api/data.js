@@ -6,13 +6,23 @@
 // canônicas que normalizeRow()/COL_ALIASES usavam, então o resto do
 // painel (filtros, funil, cohort, forecast, pivot) não precisa mudar.
 //
-// Leads/Vendas/Negociação vêm de VW_FATO_NEGOCIO_COMBINADO (2026-09-02),
-// não de FATO_NEGOCIO puro -- Consultoria só passou a existir de fato no
+// Vendas/Negociação vêm de VW_FATO_NEGOCIO_COMBINADO (2026-09-02), não de
+// FATO_NEGOCIO puro -- Consultoria só passou a existir de fato no
 // Salesforce a partir de 2026-07-14 (antes disso o pouco que aparecia em
 // FATO_NEGOCIO era ruído). A view combina Salesforce (>= corte) com
 // FATO_NEGOCIO_HIST_HUBSPOT (< corte, carga única a partir de
 // RAW.CONSULTORIA_HUBSPOT.FUNIL_ADVISORY). Ver sql/007_load_negocio_historico_hubspot.sql
 // e sql/README.md no repo Projeto Dados Snow.
+//
+// Leads vêm de VW_LEADS_SALESFORCE (2026-09-08), que lê direto o objeto Lead
+// do Salesforce Data Cloud (Lead_Home__dll), NÃO de VW_FATO_NEGOCIO_COMBINADO
+// (que é baseado em Opportunity). Isso foi trocado porque "leads" antes
+// contava todo negócio já captado em qualquer etapa (273k, desde 2021) e não
+// batia com o relatório oficial do Salesforce (~10k, desde 14/07/26) -- ver
+// sql/README.md e sql/011_criar_vw_leads_salesforce.sql no repo Projeto Dados
+// Snow. Por vir de um objeto diferente (Lead, não Opportunity), o array
+// "leads" não tem sdr_responsavel/closer_responsavel/valor/data_venda reais
+// (ficam '' -- ver mapLead()); o join com "vendas" no cohort é por email.
 //
 // Limitações conhecidas (ver sql/README.md no repo Projeto Dados Snow):
 //  - "reunioes" combina duas fontes por causa de um corte real de dados:
@@ -31,9 +41,6 @@
 //    Ver sql/README.md no repo Projeto Dados Snow para o achado completo.
 //  - "prioridade" não existe em nenhum objeto do Salesforce -- Forecast
 //    roda sem segmentação por prioridade (tudo cai em "(Sem prioridade)").
-//  - Os ~7.699 negócios com ETAPA_FUNIL = 'Lead' podem estar com EMAIL/
-//    FONTE_AQUISICAO desatualizados enquanto Lead_Home__dll (fonte no
-//    Salesforce Data Cloud) estiver quebrada -- ver sql/README.md.
 
 import snowflake from 'snowflake-sdk';
 
@@ -111,6 +118,30 @@ function mapNegocio(r) {
   };
 }
 
+function mapLead(r) {
+  return {
+    negocio_id: r.NEGOCIO_ID,
+    email: str(r.EMAIL),
+    funil: str(r.FUNIL),
+    estrategia: str(r.ESTRATEGIA),
+    deal_utm_source: str(r.UTM_SOURCE),
+    deal_utm_medium: str(r.UTM_MEDIUM),
+    deal_utm_campaign: str(r.UTM_CAMPAIGN),
+    fonte_original_pipe: str(r.FONTE_AQUISICAO),
+    canal_originador: str(r.CANAL),
+    patrimonio_investido_grupo: str(r.PATRIMONIO_DECLARADO),
+    aporte_mensal_grupo: '', // não existe no objeto Lead
+    adv_patrimonio_validado: str(r.PATRIMONIO_VALIDADO),
+    valor: '', // Lead não tem valor de negócio (isso só existe após conversão em Opportunity)
+    data_criacao: str(r.DATA_CRIACAO),
+    data_venda: '', // Lead não vende -- vendas vêm de VW_FATO_NEGOCIO_COMBINADO (mapNegocio)
+    sdr_responsavel: '', // não existe no objeto Lead
+    closer_responsavel: '', // não existe no objeto Lead
+    etapa_do_negocio: str(r.STAGE_NAME), // Status do Lead (Novo/Trabalhando/Convertido/Descartado), não StageName de Opportunity
+    prioridade: '', // não existe no Salesforce -- confirmado em 2026-09-01
+  };
+}
+
 function mapReuniaoAproximada(r) {
   return {
     negocio_id: r.NEGOCIO_ID,
@@ -170,13 +201,25 @@ async function loadFromSnowflake() {
     FROM VW_FATO_NEGOCIO_COMBINADO
   `);
 
-  const negocios = negocioRows.map(mapNegocio);
-  const leads = negocios; // "Leads" = todo negócio já captado, independente da etapa atual
   const vendas = negocioRows.filter(r => r.STAGE_NAME === 'Ganho').map(mapNegocio);
   const negociacao = negocioRows.filter(r => r.ETAPA_FUNIL === 'Opportunity').map(mapNegocio);
   const reunioesAproximadas = negocioRows
     .filter(r => r.STATUS_REUNIAO || r.BOT_CONFIRMOU_REUNIAO || r.DATA_1_REUNIAO_QUALIFICACAO)
     .map(mapReuniaoAproximada);
+
+  // "Leads" = objeto Lead do Salesforce (Data Cloud), não Opportunity -- bate com o
+  // relatório [Marketing] Leads - Consultoria (validado em 2026-09-08: 10022 vs 10290,
+  // diferença = lag de sync do share). Ver sql/README.md e sql/011_criar_vw_leads_salesforce.sql
+  // no repo Projeto Dados Snow.
+  const leadRows = await query(`
+    SELECT
+      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, STAGE_NAME,
+      FONTE_AQUISICAO, CANAL, UTM_SOURCE, UTM_MEDIUM, UTM_CAMPAIGN,
+      PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO,
+      TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO
+    FROM VW_LEADS_SALESFORCE
+  `);
+  const leads = leadRows.map(mapLead);
 
   const reuniaoHistRows = await query(`
     SELECT
