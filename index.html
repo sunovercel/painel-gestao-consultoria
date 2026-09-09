@@ -362,6 +362,10 @@ tr:hover td{background:#FAFAFA}
         <div class="multi-select" id="ms-estrategia"></div>
       </div>
       <div class="filter-group">
+        <label class="filter-label">Complemento Estratégia (Venda)</label>
+        <div class="multi-select" id="ms-complementoestrategia"></div>
+      </div>
+      <div class="filter-group">
         <label class="filter-label">Funil</label>
         <div class="multi-select" id="ms-funil"></div>
       </div>
@@ -844,15 +848,16 @@ const RAW = { leads:[], reunioes:[], vendas:[], metaCaptacao:[], metaLeads:[], n
 
 // Global filter selections
 const SEL = {
-  source:            new Set(),
-  estrategia:        new Set(),
-  funil:             new Set(),
-  patrimonio:        new Set(),
-  fonteOriginalPipe: new Set(),
-  canalOriginador:   new Set(),
-  closerResponsavel: new Set(),
-  sdrResponsavel:    new Set(),
-  tipoReuniao:       new Set(),
+  source:               new Set(),
+  estrategia:           new Set(),
+  funil:                new Set(),
+  patrimonio:           new Set(),
+  fonteOriginalPipe:    new Set(),
+  canalOriginador:      new Set(),
+  closerResponsavel:    new Set(),
+  sdrResponsavel:       new Set(),
+  tipoReuniao:          new Set(),
+  complementoEstrategia: new Set(), // só existe em vendas -- filtra exclusivamente os números de Vendas (ver passGlobalVendas)
 };
 
 const F = {   // active filter values
@@ -1325,6 +1330,9 @@ function passGlobalVendas(row) {
   if (SEL.patrimonio.size        > 0 && !SEL.patrimonio.has(row.patrimonio_investido_grupo)) return false;
   if (SEL.closerResponsavel.size > 0 && !SEL.closerResponsavel.has(row.closer_responsavel)) return false;
   if (SEL.sdrResponsavel.size    > 0 && !SEL.sdrResponsavel.has(row.sdr_responsavel))    return false;
+  // Complemento de Estratégia só existe no objeto Opportunity (vendas) -- filtro
+  // exclusivo de vendas, de propósito não replicado em passGlobal/passGlobalNegociacao.
+  if (SEL.complementoEstrategia.size > 0 && !SEL.complementoEstrategia.has(row.complemento_estrategia)) return false;
   return true;
 }
 
@@ -1464,6 +1472,7 @@ const MS_CFG = {
   closerResponsavel: { el: 'ms-closer',     field: 'closer_responsavel' },
   sdrResponsavel:    { el: 'ms-sdr',        field: 'sdr_responsavel' },
   tipoReuniao:       { el: 'ms-tiporeuniao', field: 'tipo_reuniao' },
+  complementoEstrategia: { el: 'ms-complementoestrategia', field: 'complemento_estrategia' },
 };
 
 function buildAllMS() {

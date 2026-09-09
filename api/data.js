@@ -6,13 +6,24 @@
 // canônicas que normalizeRow()/COL_ALIASES usavam, então o resto do
 // painel (filtros, funil, cohort, forecast, pivot) não precisa mudar.
 //
-// Vendas/Negociação vêm de VW_FATO_NEGOCIO_COMBINADO (2026-09-02), não de
-// FATO_NEGOCIO puro -- Consultoria só passou a existir de fato no
+// Negociação (pipeline aberto) vem de VW_FATO_NEGOCIO_COMBINADO (2026-09-02),
+// não de FATO_NEGOCIO puro -- Consultoria só passou a existir de fato no
 // Salesforce a partir de 2026-07-14 (antes disso o pouco que aparecia em
 // FATO_NEGOCIO era ruído). A view combina Salesforce (>= corte) com
 // FATO_NEGOCIO_HIST_HUBSPOT (< corte, carga única a partir de
 // RAW.CONSULTORIA_HUBSPOT.FUNIL_ADVISORY). Ver sql/007_load_negocio_historico_hubspot.sql
 // e sql/README.md no repo Projeto Dados Snow.
+//
+// Vendas vêm de VW_VENDAS_SALESFORCE (2026-09-09), que lê direto o objeto
+// Opportunity do Salesforce Data Cloud com a lógica que o Rafael (área de
+// negócio) validou: StageName=Ganho, RecordType=Consultoria, Produto=Fee
+// Fixo, DataInicioContrato > 2026-07-13 -- e usa PATRIMONIO_VALIDADO como
+// métrica de venda (não VALOR/Amount). Antes "vendas" era só um filtro
+// STAGE_NAME='Ganho' em cima de VW_FATO_NEGOCIO_COMBINADO, sem o filtro de
+// RecordType/Produto, misturando oportunidades ganhas de outras áreas da
+// Suno. Validado: 117 registros, R$ 91.983.489,00 de patrimônio validado,
+// bate exato com o relatório [Marketing] Vendas de Consultoria do
+// Salesforce. Ver sql/README.md e sql/012_criar_vw_vendas_salesforce.sql.
 //
 // Leads vêm de VW_LEADS_SALESFORCE (2026-09-08), que lê direto o objeto Lead
 // do Salesforce Data Cloud (Lead_Home__dll), NÃO de VW_FATO_NEGOCIO_COMBINADO
@@ -100,6 +111,7 @@ function mapNegocio(r) {
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
+    complemento_estrategia: str(r.COMPLEMENTO_ESTRATEGIA), // só populado em vendas (VW_VENDAS_SALESFORCE) -- ver passGlobalVendas() no painel
     deal_utm_source: str(r.UTM_SOURCE),
     deal_utm_medium: str(r.UTM_MEDIUM),
     deal_utm_campaign: str(r.UTM_CAMPAIGN),
@@ -201,7 +213,27 @@ async function loadFromSnowflake() {
     FROM VW_FATO_NEGOCIO_COMBINADO
   `);
 
-  const vendas = negocioRows.filter(r => r.STAGE_NAME === 'Ganho').map(mapNegocio);
+  // "Vendas" vem de VW_VENDAS_SALESFORCE (2026-09-09), que lê direto o objeto
+  // Opportunity do Salesforce filtrado pela lógica que o Rafael validou:
+  // StageName=Ganho, RecordType=Consultoria, Produto=Fee Fixo, DataInicioContrato
+  // > 2026-07-13. Antes vinha de VW_FATO_NEGOCIO_COMBINADO filtrando só
+  // STAGE_NAME='Ganho', sem os filtros de RecordType/Produto -- misturava
+  // oportunidades ganhas de outras áreas da Suno (ex.: RecordType='Checkout'
+  // sozinho tem 66 mil linhas em Ganho). Validado: 117 registros, R$
+  // 91.983.489,00 de patrimônio validado, bate exato com o relatório
+  // [Marketing] Vendas de Consultoria do Salesforce. Ver sql/README.md e
+  // sql/012_criar_vw_vendas_salesforce.sql no repo Projeto Dados Snow.
+  const vendaRows = await query(`
+    SELECT
+      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, COMPLEMENTO_ESTRATEGIA, STAGE_NAME,
+      FONTE_AQUISICAO, CANAL, UTM_SOURCE, UTM_MEDIUM, UTM_CAMPAIGN,
+      PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO,
+      TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
+      TO_VARCHAR(DATA_VENDA, 'YYYY-MM-DD') AS DATA_CONTRATACAO
+    FROM VW_VENDAS_SALESFORCE
+  `);
+  const vendas = vendaRows.map(mapNegocio);
+
   const negociacao = negocioRows.filter(r => r.ETAPA_FUNIL === 'Opportunity').map(mapNegocio);
   const reunioesAproximadas = negocioRows
     .filter(r => r.STATUS_REUNIAO || r.BOT_CONFIRMOU_REUNIAO || r.DATA_1_REUNIAO_QUALIFICACAO)
