@@ -35,6 +35,22 @@
 // "leads" não tem sdr_responsavel/closer_responsavel/valor/data_venda reais
 // (ficam '' -- ver mapLead()); o join com "vendas" no cohort é por email.
 //
+// Reuniões vêm de VW_REUNIOES_SALESFORCE (2026-09-09), que lê direto o objeto
+// ServiceAppointment do Salesforce (Scheduler) -- confirmado pelo vendor como
+// o objeto real de reunião comercial de Consultoria, e MUITO melhor que a
+// antiga aproximação via campos da Opportunity (StatusReuniao_c__c/
+// BotConfirmou/Data1ReuniaoQualificacao), que não tinha grão real de reunião
+// nem tipo real. Achado importante: DATA_CRIACAO na view é a data de criação
+// do LEAD (join por e-mail feito dentro da própria view), não da própria
+// ServiceAppointment -- isso faz o filtro global de "Criação" do painel
+// implementar coorte real (dos leads gerados num dia, quantos tiveram
+// reunião), que é a lógica que o Rafael descreveu em reunião. Antes, o
+// filtro comparava a data de criação do LEAD com a data de criação da
+// OPPORTUNITY (dois objetos diferentes, sem relação de coorte real).
+// Validado: para leads de 2026-09-01, 30 leads com reunião marcada e 8 com
+// realizada (vs 36/10 que a lógica antiga mostrava). Ver sql/README.md e
+// sql/013_criar_vw_reunioes_salesforce.sql no repo Projeto Dados Snow.
+//
 // Limitações conhecidas (ver sql/README.md no repo Projeto Dados Snow):
 //  - "reunioes" combina duas fontes por causa de um corte real de dados:
 //    (a) ANTES de 2026-05-29 (quando o sinal de reunião no Salesforce
@@ -43,13 +59,12 @@
 //    chamada/Resultado), a partir da planilha original que alimentava o
 //    painel antes desta migração (mesma fonte Salesforce, caminho de
 //    sincronização diferente -- não é HubSpot).
-//    (b) A PARTIR de 2026-05-29: aproximação via Salesforce -- não existe
-//    objeto de Task/Event/Meeting no Salesforce (nem no Data Cloud share,
-//    nem na base legada via Airbyte). Cada linha aqui é 1 negócio com
-//    indício de reunião (StatusReuniao_c__c, BotConfirmou,
-//    Data1ReuniaoQualificacao), não 1 reunião real -- não há "Tipo de
-//    chamada e reunião" real, nem múltiplas reuniões por negócio.
-//    Ver sql/README.md no repo Projeto Dados Snow para o achado completo.
+//    (b) A PARTIR de 2026-05-29: VW_REUNIOES_SALESFORCE (ver acima).
+//    Email__c só é preenchido em 61% das ServiceAppointment (2347/3822) --
+//    reuniões sem e-mail correspondente a um Lead ficam sem DATA_CRIACAO e só
+//    aparecem quando nenhum filtro de Criação está ativo. sdr_responsavel/
+//    closer_responsavel não são mapeados (ServiceAppointment só tem OwnerId,
+//    sem nome do responsável).
 //  - "prioridade" não existe em nenhum objeto do Salesforce -- Forecast
 //    roda sem segmentação por prioridade (tudo cai em "(Sem prioridade)").
 
@@ -154,21 +169,21 @@ function mapLead(r) {
   };
 }
 
-function mapReuniaoAproximada(r) {
+function mapReuniaoSalesforce(r) {
   return {
     negocio_id: r.NEGOCIO_ID,
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
-    deal_utm_source: str(r.UTM_SOURCE),
-    fonte_original_pipe: str(r.FONTE_AQUISICAO),
+    deal_utm_source: '', // não existe no ServiceAppointment
+    fonte_original_pipe: '', // não existe no ServiceAppointment
     canal_originador: str(r.CANAL),
-    sdr_responsavel: str(r.SDR_RESPONSAVEL),
-    closer_responsavel: str(r.CLOSER_RESPONSAVEL),
-    data_criacao: str(r.DATA_CRIACAO),
-    data_da_atividade: str(r.DATA_1_REUNIAO_QUALIFICACAO || r.DATA_CRIACAO),
-    status_reuniao: str(r.STATUS_REUNIAO) || (r.BOT_CONFIRMOU_REUNIAO ? 'Concluído' : ''),
-    tipo_reuniao: 'Reunião', // aproximado -- não existe "Tipo de chamada e reunião" real na fonte
+    sdr_responsavel: '', // ServiceAppointment só tem OwnerId (sem nome) -- não mapeado
+    closer_responsavel: '', // idem
+    data_criacao: str(r.DATA_CRIACAO), // data de criação do LEAD (via join por e-mail na view), não da própria reunião
+    data_da_atividade: str(r.DATA_ATIVIDADE),
+    status_reuniao: str(r.STATUS_REUNIAO),
+    tipo_reuniao: str(r.TIPO_REUNIAO) || 'Reunião',
   };
 }
 
@@ -208,8 +223,7 @@ async function loadFromSnowflake() {
       APORTE_MENSAL_FAIXA, PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO, VALOR,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
       TO_VARCHAR(DATA_CONTRATACAO, 'YYYY-MM-DD') AS DATA_CONTRATACAO,
-      SDR_RESPONSAVEL, CLOSER_RESPONSAVEL, STATUS_REUNIAO, BOT_CONFIRMOU_REUNIAO,
-      TO_VARCHAR(DATA_1_REUNIAO_QUALIFICACAO, 'YYYY-MM-DD') AS DATA_1_REUNIAO_QUALIFICACAO
+      SDR_RESPONSAVEL, CLOSER_RESPONSAVEL
     FROM VW_FATO_NEGOCIO_COMBINADO
   `);
 
@@ -235,9 +249,6 @@ async function loadFromSnowflake() {
   const vendas = vendaRows.map(mapNegocio);
 
   const negociacao = negocioRows.filter(r => r.ETAPA_FUNIL === 'Opportunity').map(mapNegocio);
-  const reunioesAproximadas = negocioRows
-    .filter(r => r.STATUS_REUNIAO || r.BOT_CONFIRMOU_REUNIAO || r.DATA_1_REUNIAO_QUALIFICACAO)
-    .map(mapReuniaoAproximada);
 
   // "Leads" = objeto Lead do Salesforce (Data Cloud), não Opportunity -- bate com o
   // relatório [Marketing] Leads - Consultoria (validado em 2026-09-08: 10022 vs 10290,
@@ -261,7 +272,30 @@ async function loadFromSnowflake() {
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_CRIACAO
     FROM FATO_REUNIAO_HIST_PLANILHA
   `);
-  const reunioes = [...reuniaoHistRows.map(mapReuniaoHistorica), ...reunioesAproximadas];
+
+  // Reuniões (a partir de 2026-05-29) vêm de VW_REUNIOES_SALESFORCE (2026-09-09),
+  // que lê direto o objeto ServiceAppointment do Salesforce (Scheduler) -- confirmado
+  // pelo vendor como o objeto real de reunião comercial, bem melhor que a antiga
+  // aproximação via campos da Opportunity (StatusReuniao_c__c/BotConfirmou/
+  // Data1ReuniaoQualificacao). DATA_CRIACAO na view é a data de criação do LEAD
+  // (join por e-mail dentro da própria view), não da ServiceAppointment -- isso faz
+  // o filtro global de "Criação" do painel implementar coorte real (dos leads
+  // gerados num dia, quantos tiveram reunião), como pedido pelo Rafael. Validado:
+  // para leads de 2026-09-01, 30 leads com reunião marcada e 8 com realizada (vs
+  // 36/10 que a lógica antiga via Opportunity mostrava). Limitação conhecida:
+  // Email__c só é preenchido em 61% das ServiceAppointment -- reuniões sem e-mail
+  // correspondente a um Lead ficam sem DATA_CRIACAO e só aparecem quando nenhum
+  // filtro de Criação está ativo. sdr_responsavel/closer_responsavel não mapeados
+  // (ServiceAppointment só tem OwnerId, sem nome). Ver sql/README.md e
+  // sql/013_criar_vw_reunioes_salesforce.sql no repo Projeto Dados Snow.
+  const reuniaoSFRows = await query(`
+    SELECT
+      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
+      TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
+      TO_VARCHAR(DATA_ATIVIDADE, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_ATIVIDADE
+    FROM VW_REUNIOES_SALESFORCE
+  `);
+  const reunioes = [...reuniaoHistRows.map(mapReuniaoHistorica), ...reuniaoSFRows.map(mapReuniaoSalesforce)];
 
   const metaRows = await query(`
     SELECT
