@@ -48,11 +48,13 @@
 // filtro comparava a data de criação do LEAD com a data de criação da
 // OPPORTUNITY (dois objetos diferentes, sem relação de coorte real).
 // Validado (e corrigido em 2026-09-09, ver sql/014_fix_timezone_e_business_unit_views.sql
-// no repo Projeto Dados Snow -- fix de fuso horário fixo + filtro de
-// BusinessUnit no join): para leads de 2026-09-01, 29 linhas de reunião, 20
-// leads distintos com reunião marcada e 4 com realizada (vs 36/10 que a
-// lógica antiga via Opportunity mostrava). Ver sql/README.md e
-// sql/013_criar_vw_reunioes_salesforce.sql no repo Projeto Dados Snow.
+// e sql/015_fix_qualify_lead_convertido.sql no repo Projeto Dados Snow --
+// fix de fuso horário fixo, filtro de BusinessUnit no join, e priorização
+// do Lead Convertido entre duplicados por e-mail): para leads de 2026-09-01,
+// 21 linhas de reunião, 18 leads distintos com reunião marcada e 2 com
+// realizada (vs 36/10 que a lógica antiga via Opportunity mostrava). Ver
+// sql/README.md e sql/013_criar_vw_reunioes_salesforce.sql no repo Projeto
+// Dados Snow.
 //
 // Limitações conhecidas (ver sql/README.md no repo Projeto Dados Snow):
 //  - "reunioes" combina duas fontes por causa de um corte real de dados:
@@ -284,9 +286,10 @@ async function loadFromSnowflake() {
   // (join por e-mail dentro da própria view), não da ServiceAppointment -- isso faz
   // o filtro global de "Criação" do painel implementar coorte real (dos leads
   // gerados num dia, quantos tiveram reunião), como pedido pelo Rafael. Validado:
-  // para leads de 2026-09-01, 29 linhas de reunião, 20 leads distintos com
-  // reunião marcada e 4 com realizada (vs 36/10 que a lógica antiga via
-  // Opportunity mostrava; ver fix de fuso horário em sql/014). Limitação conhecida:
+  // para leads de 2026-09-01, 21 linhas de reunião, 18 leads distintos com
+  // reunião marcada e 2 com realizada (vs 36/10 que a lógica antiga via
+  // Opportunity mostrava; ver fixes de fuso horário e Lead Convertido em
+  // sql/014 e sql/015). Limitação conhecida:
   // Email__c só é preenchido em 61% das ServiceAppointment -- reuniões sem e-mail
   // correspondente a um Lead ficam sem DATA_CRIACAO e só aparecem quando nenhum
   // filtro de Criação está ativo. sdr_responsavel/closer_responsavel não mapeados
