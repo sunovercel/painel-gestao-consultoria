@@ -56,6 +56,14 @@
 // sql/README.md e sql/013_criar_vw_reunioes_salesforce.sql no repo Projeto
 // Dados Snow.
 //
+// Fix 2026-09-10 (pedido do Rafael, sql/018_fix_estratificacao_reunioes_via_lead.sql):
+// FUNIL/ESTRATEGIA/UTM_SOURCE/FONTE_AQUISICAO passam a vir do LEAD (join já
+// existente na view), não do próprio ServiceAppointment -- o campo
+// FunilOrigem_c__c do ServiceAppointment tinha um valor-placeholder
+// "(sem oportunidade nem lead)" em 34% das linhas, quebrando qualquer
+// filtro/quebra de gráfico por Funil/Estratégia na aba Reuniões. Validado:
+// 100% preenchido após o fix (antes 66% em Funil/Estratégia, 0% em UTM).
+//
 // Limitações conhecidas (ver sql/README.md no repo Projeto Dados Snow):
 //  - "reunioes" combina duas fontes por causa de um corte real de dados:
 //    (a) ANTES de 2026-05-29 (quando o sinal de reunião no Salesforce
@@ -180,9 +188,9 @@ function mapReuniaoSalesforce(r) {
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
-    deal_utm_source: '', // não existe no ServiceAppointment
-    fonte_original_pipe: '', // não existe no ServiceAppointment
-    canal_originador: str(r.CANAL),
+    deal_utm_source: str(r.UTM_SOURCE), // vem do Lead via join (sql/018) -- antes vinha sempre vazio
+    fonte_original_pipe: str(r.FONTE_AQUISICAO), // idem
+    canal_originador: str(r.CANAL), // canal de AGENDAMENTO da reunião (ServiceAppointment) -- conceito distinto do canal de conexão do Lead
     sdr_responsavel: '', // ServiceAppointment só tem OwnerId (sem nome) -- não mapeado
     closer_responsavel: '', // idem
     data_criacao: str(r.DATA_CRIACAO), // data de criação do LEAD (via join por e-mail na view), não da própria reunião
@@ -297,7 +305,7 @@ async function loadFromSnowflake() {
   // sql/013_criar_vw_reunioes_salesforce.sql no repo Projeto Dados Snow.
   const reuniaoSFRows = await query(`
     SELECT
-      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
+      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
       TO_VARCHAR(DATA_ATIVIDADE, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_ATIVIDADE
     FROM VW_REUNIOES_SALESFORCE
