@@ -1065,7 +1065,11 @@ function normVal(s) {
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 }
 
-const REALIZADA_VALUES = ['concluido','realizada','concluida','concluded','done','realizado'];
+// Fix 2026-09-10 (decisão do Allan, achada na devolutiva técnica): 'confirmada'
+// e 'adiantada' também contam como reunião realizada -- status reais do
+// ServiceAppointment.Status__c não cobertos antes (Realizada 1.148 já entrava;
+// Confirmada 222 e Adiantada 89 ficavam de fora sem necessidade).
+const REALIZADA_VALUES = ['concluido','realizada','concluida','concluded','done','realizado','confirmada','adiantada'];
 
 function detectReuniaoStatus() {
   if (!RAW.reunioes.length) return;
@@ -1335,7 +1339,12 @@ function filteredReuniones() {
 // fall back to data_venda so they are not erroneously excluded.
 function passGlobalVendas(row) {
   if (F.di || F.df) {
-    const d = parseDate(row.data_criacao) || parseDate(row.data_venda, VENDA_DATE_FMT);
+    // Fix 2026-09-10 (decisão do Allan): data oficial da venda é sempre
+    // DataInicioContrato (data_venda), nunca data_criacao do lead -- antes,
+    // data_criacao tinha precedência e causava descompasso entre abas (ex.:
+    // "safra de agosto com venda em julho" no Cohort, quando CloseDate e
+    // DataInicioContrato divergem de mês).
+    const d = parseDate(row.data_venda, VENDA_DATE_FMT);
     if (!d) return false;
     if (F.di && d < F.di) return false;
     if (F.df && d > F.df) return false;
@@ -1701,8 +1710,12 @@ function applyDatePreset(preset, isVenda = false) {
     di = new Date(today); di.setDate(di.getDate() - 29);
     df = new Date(today);
   } else if (preset === '3meses') {
+    // Fix 2026-09-10 (achado do Allan): df usava dia 0 do mês atual (= último
+    // dia do mês ANTERIOR), excluindo o mês corrente inteiro -- só aqui, os
+    // outros presets (7dias/30dias/mês) terminam em today. "Últ. 3 meses"
+    // devolvia exatamente o mesmo que "Mês passado".
     di = new Date(today.getFullYear(), today.getMonth() - 3, 1);
-    df = new Date(today.getFullYear(), today.getMonth(), 0);
+    df = new Date(today);
   }
 
   const toInput = d => d.toISOString().slice(0, 10);
@@ -1737,7 +1750,7 @@ function applyReuniaoDatePreset(preset) {
   else if (preset === 'mes')       { di = new Date(today.getFullYear(), today.getMonth(), 1); df = new Date(today); }
   else if (preset === 'mespassado'){ di = new Date(today.getFullYear(), today.getMonth() - 1, 1); df = new Date(today.getFullYear(), today.getMonth(), 0); }
   else if (preset === '30dias')    { di = new Date(today); di.setDate(di.getDate() - 29); df = new Date(today); }
-  else if (preset === '3meses')    { di = new Date(today.getFullYear(), today.getMonth() - 3, 1); df = new Date(today.getFullYear(), today.getMonth(), 0); }
+  else if (preset === '3meses')    { di = new Date(today.getFullYear(), today.getMonth() - 3, 1); df = new Date(today); } // fix 2026-09-10 (achado do Allan): df era dia 0 do mês atual, excluindo o mês corrente
   const toInput = d => d.toISOString().slice(0, 10);
   F.rai = new Date(di.getTime());
   F.raf = new Date(df.getTime()); F.raf.setHours(23, 59, 59);
@@ -1757,7 +1770,7 @@ function applyTombDatePreset(preset) {
   else if (preset === 'mes')       { di = new Date(today.getFullYear(), today.getMonth(), 1); df = new Date(today); }
   else if (preset === 'mespassado'){ di = new Date(today.getFullYear(), today.getMonth() - 1, 1); df = new Date(today.getFullYear(), today.getMonth(), 0); }
   else if (preset === '30dias')    { di = new Date(today); di.setDate(di.getDate() - 29); df = new Date(today); }
-  else if (preset === '3meses')    { di = new Date(today.getFullYear(), today.getMonth() - 3, 1); df = new Date(today.getFullYear(), today.getMonth(), 0); }
+  else if (preset === '3meses')    { di = new Date(today.getFullYear(), today.getMonth() - 3, 1); df = new Date(today); } // fix 2026-09-10 (achado do Allan): df era dia 0 do mês atual, excluindo o mês corrente
   const toInput = d => d.toISOString().slice(0, 10);
   F.tdi = new Date(di.getTime());
   F.tdf = new Date(df.getTime()); F.tdf.setHours(23, 59, 59);
