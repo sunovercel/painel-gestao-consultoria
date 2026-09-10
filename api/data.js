@@ -138,6 +138,18 @@ async function query(sqlText) {
 
 const str = (v) => (v == null ? '' : String(v));
 
+// Fix 2026-09-10 (item 11 da devolutiva do Allan): StageName__c tem "Em
+// Negociação" e "Em negociação" como dois valores reais distintos no
+// Salesforce (mesmo estágio, digitado com caixa diferente em momentos
+// diferentes) -- sem normalizar, qualquer agrupamento por etapa (Forecast,
+// chips) duplica essa etapa em duas linhas. Normaliza só esse par conhecido
+// (não faz title-case geral, pra não alterar outras etapas já consistentes).
+const ETAPA_CANONICA = { 'em negociacao': 'Em Negociação' };
+function normalizeEtapa(v) {
+  const key = String(v || '').toLowerCase().trim().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return ETAPA_CANONICA[key] || v;
+}
+
 function mapNegocio(r) {
   return {
     negocio_id: r.NEGOCIO_ID,
@@ -158,7 +170,7 @@ function mapNegocio(r) {
     data_venda: str(r.DATA_CONTRATACAO),
     sdr_responsavel: str(r.SDR_RESPONSAVEL),
     closer_responsavel: str(r.CLOSER_RESPONSAVEL),
-    etapa_do_negocio: str(r.STAGE_NAME),
+    etapa_do_negocio: normalizeEtapa(str(r.STAGE_NAME)),
     prioridade: '', // não existe no Salesforce -- confirmado em 2026-09-01
     tipo_reuniao: str(r.TIPO_REUNIAO), // só populado em vendas (VW_VENDAS_SALESFORCE, sql/020) -- vem do vínculo nativo ServiceAppointment.ParentRecordId, não mais cruzamento por e-mail
   };

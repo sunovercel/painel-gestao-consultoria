@@ -1424,11 +1424,24 @@ function passGlobalNegociacao(row) {
   return true;
 }
 
-// Negociações filtradas: filtros globais + cruzamento de Tipo de Reunião (por e-mail) + filtro de Etapa do negócio.
+// Etapas fechadas (ganhas ou perdidas) -- não são pipeline aberto. Fix 2026-09-10
+// (item 8 da devolutiva do Allan): "Carteira Consolidada" é IsWon=true/IsClosed=true
+// no Salesforce (é a etapa de tombamento pós-venda, não pipeline em aberto) --
+// contar por nome de etapa incluía negócios já ganhos como se fossem forecast
+// aberto. Sem IsClosed disponível em VW_FATO_NEGOCIO_COMBINADO hoje, a
+// aproximação é excluir as etapas conhecidas como fechadas.
+const ETAPAS_FECHADAS = ['ganho', 'perdido', 'carteira consolidada', 'churn'];
+
+// Negociações filtradas: filtros globais + filtro de Etapa do negócio.
+// Fix 2026-09-10 (achado do Allan, mesmo padrão do bug de Vendas): removido o
+// cruzamento de Tipo de Reunião por e-mail (emailsTipoRealizadas()) -- essa
+// chave só cobre ~34% dos negócios e RAW.negociacao não tem um vínculo nativo
+// de reunião equivalente ao que foi construído para Vendas (sql/020). Seguindo
+// o mesmo princípio: quando a dimensão não existe de forma confiável, a
+// resposta é não filtrar, não reconstruir por chave aproximada.
 function filteredNegociacao() {
   let rows = RAW.negociacao.filter(passGlobalNegociacao);
-  const emailsTipo = emailsTipoRealizadas();
-  if (emailsTipo) rows = rows.filter(v => emailsTipo.has((v.email || '').toLowerCase().trim()));
+  rows = rows.filter(r => !ETAPAS_FECHADAS.includes(normVal(r.etapa_do_negocio)));
   if (STATE.forecastEtapa.size > 0) {
     rows = rows.filter(r => STATE.forecastEtapa.has((r.etapa_do_negocio || '').trim() || '(Vazio)'));
   }
@@ -3193,7 +3206,10 @@ function prioKey(row) {
 function renderForecastEtapaChips() {
   const el = document.getElementById('forecast-etapa-chips');
   if (!el) return;
-  const etapas = [...new Set(RAW.negociacao.map(r => (r.etapa_do_negocio||'').trim() || '(Vazio)'))].sort();
+  // Fix 2026-09-10: não lista etapas fechadas (Ganho/Perdido/Carteira Consolidada/
+  // Churn) nos chips -- filteredNegociacao() já as exclui do Forecast (item 8),
+  // então um chip dessas etapas sempre voltaria vazio.
+  const etapas = [...new Set(RAW.negociacao.filter(r => !ETAPAS_FECHADAS.includes(normVal(r.etapa_do_negocio))).map(r => (r.etapa_do_negocio||'').trim() || '(Vazio)'))].sort();
   if (!etapas.length) { el.innerHTML = '<span style="font-size:12px;color:var(--text-faint)">Sem dados de Etapa do Negócio</span>'; return; }
   el.innerHTML = etapas.map(e =>
     `<button class="preset-btn forecast-etapa-chip ${STATE.forecastEtapa.has(e)?'active':''}" data-etapa="${esc(e)}">${esc(e)}</button>`
