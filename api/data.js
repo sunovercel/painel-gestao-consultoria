@@ -16,14 +16,19 @@
 //
 // Vendas vêm de VW_VENDAS_SALESFORCE (2026-09-09), que lê direto o objeto
 // Opportunity do Salesforce Data Cloud com a lógica que o Rafael (área de
-// negócio) validou: StageName=Ganho, RecordType=Consultoria, Produto=Fee
-// Fixo, DataInicioContrato > 2026-07-13 -- e usa PATRIMONIO_VALIDADO como
+// negócio) validou: RecordType=Consultoria, Produto=Fee Fixo,
+// DataInicioContrato > 2026-07-13 -- e usa PATRIMONIO_VALIDADO como
 // métrica de venda (não VALOR/Amount). Antes "vendas" era só um filtro
 // STAGE_NAME='Ganho' em cima de VW_FATO_NEGOCIO_COMBINADO, sem o filtro de
 // RecordType/Produto, misturando oportunidades ganhas de outras áreas da
-// Suno. Validado: 117 registros, R$ 91.983.489,00 de patrimônio validado,
-// bate exato com o relatório [Marketing] Vendas de Consultoria do
-// Salesforce. Ver sql/README.md e sql/012_criar_vw_vendas_salesforce.sql.
+// Suno.
+// Fix 2026-09-10 (sql/019, pedido do Rafael): StageName passou a aceitar
+// 'Ganho' OU 'Carteira Consolidada' -- uma venda avança de fase depois de
+// implantada/consolidada na carteira, e o filtro antigo (só 'Ganho') fazia
+// essas vendas sumirem do card mesmo continuando reais. Validado: 249
+// registros (113 Ganho + 136 Carteira Consolidada), R$ 249.341.846,72 de
+// patrimônio validado desde o corte. Ver sql/README.md e
+// sql/019_fix_vendas_incluir_carteira_consolidada.sql.
 //
 // Leads vêm de VW_LEADS_SALESFORCE (2026-09-08), que lê direto o objeto Lead
 // do Salesforce Data Cloud (Lead_Home__dll), NÃO de VW_FATO_NEGOCIO_COMBINADO
@@ -242,14 +247,18 @@ async function loadFromSnowflake() {
 
   // "Vendas" vem de VW_VENDAS_SALESFORCE (2026-09-09), que lê direto o objeto
   // Opportunity do Salesforce filtrado pela lógica que o Rafael validou:
-  // StageName=Ganho, RecordType=Consultoria, Produto=Fee Fixo, DataInicioContrato
-  // > 2026-07-13. Antes vinha de VW_FATO_NEGOCIO_COMBINADO filtrando só
-  // STAGE_NAME='Ganho', sem os filtros de RecordType/Produto -- misturava
-  // oportunidades ganhas de outras áreas da Suno (ex.: RecordType='Checkout'
-  // sozinho tem 66 mil linhas em Ganho). Validado: 117 registros, R$
-  // 91.983.489,00 de patrimônio validado, bate exato com o relatório
-  // [Marketing] Vendas de Consultoria do Salesforce. Ver sql/README.md e
-  // sql/012_criar_vw_vendas_salesforce.sql no repo Projeto Dados Snow.
+  // RecordType=Consultoria, Produto=Fee Fixo, DataInicioContrato > 2026-07-13.
+  // Antes vinha de VW_FATO_NEGOCIO_COMBINADO filtrando só STAGE_NAME='Ganho',
+  // sem os filtros de RecordType/Produto -- misturava oportunidades ganhas de
+  // outras áreas da Suno (ex.: RecordType='Checkout' sozinho tem 66 mil
+  // linhas em Ganho).
+  // Fix 2026-09-10 (sql/019, pedido do Rafael): StageName aceita 'Ganho' OU
+  // 'Carteira Consolidada' -- venda avança de fase após implantada/consolidada
+  // na carteira, e o filtro antigo (só 'Ganho') fazia essas vendas sumirem do
+  // card. Validado: 249 registros (113 Ganho + 136 Carteira Consolidada),
+  // R$ 249.341.846,72 de patrimônio validado. Ver sql/README.md e
+  // sql/019_fix_vendas_incluir_carteira_consolidada.sql no repo Projeto Dados
+  // Snow.
   const vendaRows = await query(`
     SELECT
       NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, COMPLEMENTO_ESTRATEGIA, STAGE_NAME,
