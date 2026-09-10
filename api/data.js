@@ -241,6 +241,7 @@ function mapTombamento(r) {
     nome: str(r.NOME),
     email: str(r.EMAIL),
     taxa_de_adm: str(r.TAXA_ADM),
+    taxa_fechada: str(r.TAXA_FECHADA), // fonte primária de taxa (sql/021) -- fallback pra taxa_de_adm no painel (tombTaxa())
     data_de_implantacao: str(r.DATA_IMPLANTACAO),
     pl_total_implantado_via_api: str(r.PL_IMPLANTACAO),
   };
@@ -363,9 +364,17 @@ async function loadFromSnowflake() {
     meta_de_pl_medio: str(m.META_PL_MEDIO),
   }));
 
+  // Fix 2026-09-10 (sql/021, item 10 da devolutiva do Allan): TAXA_ADM
+  // (TaxaADM_c__c, texto livre) achata/zera boa parte da variedade real de
+  // taxas (só 3 valores distintos chegavam ao painel). TAXA_FECHADA
+  // (TaxaFechada_c__c, picklist) é mais limpa e vira a fonte primária no
+  // painel (tombTaxa() no index.html) -- TAXA_ADM continua como fallback,
+  // sem alteração. Cobertura combinada ainda deixa a maioria dos
+  // tombamentos sem taxa (~73%) -- pendência de cadastro no Salesforce, não
+  // de código.
   const tombRows = await query(`
     SELECT
-      NOME, EMAIL, TAXA_ADM,
+      NOME, EMAIL, TAXA_ADM, TAXA_FECHADA,
       TO_VARCHAR(DATA_IMPLANTACAO, 'YYYY-MM-DD') AS DATA_IMPLANTACAO,
       PL_IMPLANTACAO
     FROM FATO_TOMBAMENTO

@@ -1157,8 +1157,20 @@ function parseTaxa(s) {
 // vinha com agrupadores e 3 casas decimais embutidas — se a planilha voltar a esse
 // formato, os números inflarão ~1000×; validar magnitude (mediana ~R$ 600k por cliente).
 function parsePLImplantado(s) { return parseNum(s); }
+// Fix 2026-09-10 (item 10 da devolutiva do Allan): taxa_de_adm (TaxaADM__c) é
+// texto livre no Salesforce e achata/zera boa parte da variedade real de taxas
+// (só 3 valores distintos chegavam ao painel). taxa_fechada (TaxaFechada__c,
+// sql/021) é um picklist mais limpo -- vira a fonte primária; taxa_de_adm
+// continua como fallback quando taxa_fechada não existe (~73% dos casos ainda
+// ficam sem nenhuma das duas -- pendência de cadastro no Salesforce, não de
+// código, conforme o Allan documentou).
+function tombTaxa(row) {
+  const t1 = parseTaxa(row.taxa_fechada);
+  if (t1 > 0) return t1;
+  return parseTaxa(row.taxa_de_adm);
+}
 // Valor do tombamento = PL implantado × taxa de administração.
-function tombValor(row) { return parsePLImplantado(row.pl_total_implantado_via_api) * parseTaxa(row.taxa_de_adm); }
+function tombValor(row) { return parsePLImplantado(row.pl_total_implantado_via_api) * tombTaxa(row); }
 
 const fmtN   = n => (n||0).toLocaleString('pt-BR');
 const parsePatrimonio = s => { const n = parseNum(s); return n > 0 && n < 10000 ? n * 1000 : n; };
@@ -2452,7 +2464,7 @@ function computeTombAlertas() {
     const fora      = !em || !vendaEmails.has(em);
     const plVazio   = !plStr || pl === 0;
     const plSemData = pl > 0 && !d;
-    const taxaAlta  = parseTaxa(r.taxa_de_adm) > 0.015;
+    const taxaAlta  = tombTaxa(r) > 0.015;
     if (fora) {
       if (em) { foraEmails.add(em); a.foraPLComEmail += pl; }
       else    { a.semEmailQtd++;    a.semEmailPL     += pl; }
@@ -2505,7 +2517,7 @@ function renderTombamentoResumo(items) {
   const totPL    = rows.reduce((s,r) => s + parsePLImplantado(r.pl_total_implantado_via_api), 0);
   const totValor = rows.reduce((s,r) => s + tombValor(r), 0);
   const plMed    = comPL.length ? totPL / comPL.length : 0;
-  const taxas    = rows.map(r => parseTaxa(r.taxa_de_adm)).filter(t => t > 0);
+  const taxas    = rows.map(tombTaxa).filter(t => t > 0);
   const taxaMed  = taxas.length ? taxas.reduce((a,b)=>a+b,0) / taxas.length : 0;
 
   document.getElementById('tomb-card-title').textContent = 'Tombamentos — Resumo';
