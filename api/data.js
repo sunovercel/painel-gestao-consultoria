@@ -160,6 +160,7 @@ function mapNegocio(r) {
     closer_responsavel: str(r.CLOSER_RESPONSAVEL),
     etapa_do_negocio: str(r.STAGE_NAME),
     prioridade: '', // não existe no Salesforce -- confirmado em 2026-09-01
+    tipo_reuniao: str(r.TIPO_REUNIAO), // só populado em vendas (VW_VENDAS_SALESFORCE, sql/020) -- vem do vínculo nativo ServiceAppointment.ParentRecordId, não mais cruzamento por e-mail
   };
 }
 
@@ -255,15 +256,22 @@ async function loadFromSnowflake() {
   // Fix 2026-09-10 (sql/019, pedido do Rafael): StageName aceita 'Ganho' OU
   // 'Carteira Consolidada' -- venda avança de fase após implantada/consolidada
   // na carteira, e o filtro antigo (só 'Ganho') fazia essas vendas sumirem do
-  // card. Validado: 249 registros (113 Ganho + 136 Carteira Consolidada),
-  // R$ 249.341.846,72 de patrimônio validado. Ver sql/README.md e
-  // sql/019_fix_vendas_incluir_carteira_consolidada.sql no repo Projeto Dados
-  // Snow.
+  // card. Validado: 249 registros, R$ 249.341.846,72 de patrimônio validado.
+  // Ver sql/README.md e sql/019_fix_vendas_incluir_carteira_consolidada.sql.
+  //
+  // Fix 2026-09-10 (sql/020, achado do Allan via dogfooding no painel em
+  // produção): TIPO_REUNIAO agora vem da própria view, via vínculo nativo
+  // ServiceAppointment.ParentRecordId -- ANTES o painel cruzava vendas por
+  // e-mail contra reuniões realizadas (emailsTipoRealizadas() no index.html),
+  // e essa chave só cobria ~34% das vendas -- com o default de Tipo de
+  // Reunião = Closer+Consultor (aplicado em 09/09), isso cortava a aba de
+  // Vendas de ~250 para 23 registros. Ver sql/README.md e
+  // sql/020_fix_vendas_join_nativo_reuniao.sql no repo Projeto Dados Snow.
   const vendaRows = await query(`
     SELECT
       NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, COMPLEMENTO_ESTRATEGIA, STAGE_NAME,
       FONTE_AQUISICAO, CANAL, UTM_SOURCE, UTM_MEDIUM, UTM_CAMPAIGN,
-      PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO,
+      PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO, TIPO_REUNIAO,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
       TO_VARCHAR(DATA_VENDA, 'YYYY-MM-DD') AS DATA_CONTRATACAO
     FROM VW_VENDAS_SALESFORCE

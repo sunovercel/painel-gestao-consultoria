@@ -1368,11 +1368,22 @@ function emailsTipoRealizadas() {
   return s;
 }
 
+// Fix 2026-09-10 (achado do Allan via dogfooding): antes, o filtro de Tipo de
+// Reunião cruzava Vendas por e-mail contra reuniões realizadas
+// (emailsTipoRealizadas() abaixo) porque a coluna tipo_reuniao não existia em
+// Vendas -- essa chave só cobria ~34% dos casos e, com o default Closer+
+// Consultor (sql/README.md), cortava a aba de Vendas de ~250 para 23
+// registros. Vendas agora tem tipo_reuniao nativo (sql/020, join por
+// ServiceAppointment.ParentRecordId). Regra: só filtra fora a venda que TEM
+// um tipo_reuniao conhecido e ele não está entre os selecionados -- vendas
+// sem reunião vinculada (tipo_reuniao vazio) não são excluídas por falta de
+// dado (mesmo princípio do achado do Allan: quando a dimensão é desconhecida,
+// a resposta é não filtrar, não reconstruir por chave aproximada).
 function filteredVendas(applyVendaDate = false) {
   let rows = RAW.vendas.filter(passGlobalVendas);
-  // Filtro de Tipo de Reunião: vendas não têm a coluna → cruzamento por e-mail (helper compartilhado).
-  const emailsTipo = emailsTipoRealizadas();
-  if (emailsTipo) rows = rows.filter(v => emailsTipo.has((v.email || '').toLowerCase().trim()));
+  if (TIPO_IN_REUNIOES && SEL.tipoReuniao.size > 0 && SEL.tipoReuniao.size < TIPO_REUNIAO_TOTAL) {
+    rows = rows.filter(v => !v.tipo_reuniao || SEL.tipoReuniao.has(v.tipo_reuniao));
+  }
   if (applyVendaDate && (F.vdi || F.vdf)) {
     rows = rows.filter(r => {
       const d = parseDate(r.data_venda, VENDA_DATE_FMT);
