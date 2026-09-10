@@ -908,6 +908,7 @@ let SDR_IN_REUNIOES = false;     // SDR presente na base de reuniões
 let CLOSER_IN_REUNIOES = false;  // Closer presente na base de reuniões (Closer nunca filtra leads)
 let TIPO_IN_REUNIOES = false;    // Tipo de reunião presente em reuniões (vendas usam cruzamento por e-mail)
 let TIPO_REUNIAO_TOTAL = 0;      // nº de tipos distintos (tratar "Todos selecionados" como sem restrição)
+let tipoReuniaoDefaultApplied = false; // aplica o default de Tipo de Reunião (ver detectSdrCloserColumns) só na 1a carga, não sobrescreve escolha manual em refresh
 
 // ================================================================
 // UTILITIES
@@ -1085,6 +1086,23 @@ function detectSdrCloserColumns() {
   CLOSER_IN_REUNIOES = has(RAW.reunioes, 'closer_responsavel');
   TIPO_IN_REUNIOES   = has(RAW.reunioes, 'tipo_reuniao');
   TIPO_REUNIAO_TOTAL = new Set(RAW.reunioes.map(r => r.tipo_reuniao).filter(v => v !== undefined)).size;
+
+  // Fix 2026-09-10 (pedido do Rafael Kreisler, thread "Painel de Consultoria"):
+  // reuniões de SDR (primeiro contato/triagem) não representam avanço real no
+  // funil e inflavam "Reuniões Marcadas" acima do número de Leads no mesmo
+  // período. Por padrão, na 1a carga, o filtro "Tipo de Reunião" já vem
+  // pré-selecionado só com Closer + Consultor -- SDR (e qualquer outro tipo,
+  // incl. "Sem tipo") fica de fora da contagem por padrão em todas as views que
+  // usam filteredReuniones() (Funil, aba Reuniões, Pivot). O usuário pode
+  // reincluir manualmente no filtro se quiser ver o dado completo. Não
+  // sobrescreve uma seleção já feita pelo usuário (refreshData() chama esta
+  // função de novo a cada atualização).
+  if (!tipoReuniaoDefaultApplied && TIPO_IN_REUNIOES) {
+    const tiposDisponiveis = new Set(RAW.reunioes.map(r => r.tipo_reuniao).filter(v => v));
+    const defaultTipos = ['Closer', 'Consultor'].filter(t => tiposDisponiveis.has(t));
+    if (defaultTipos.length) SEL.tipoReuniao = new Set(defaultTipos);
+    tipoReuniaoDefaultApplied = true;
+  }
 }
 
 function isRealizada(r) {
@@ -1542,7 +1560,7 @@ function populateMS(key, values) {
   const sorted = [...values].sort((a,b) => (a||'').localeCompare(b||'','pt-BR'));
   wrap.innerHTML = sorted.map(v => `
     <label class="ms-opt">
-      <input type="checkbox" value="${esc(v)}" data-key="${key}">
+      <input type="checkbox" value="${esc(v)}" data-key="${key}" ${SEL[key].has(v) ? 'checked' : ''}>
       <span class="ms-opt-label">${esc(v||'(Vazio)')}</span>
     </label>`).join('');
 
@@ -1554,6 +1572,7 @@ function populateMS(key, values) {
       render();
     });
   });
+  updateMSTrigger(key); // reflete uma pré-seleção programática (ex.: default de Tipo de Reunião) no rótulo/badge do filtro
 }
 
 function updateMSTrigger(key) {
