@@ -1065,6 +1065,55 @@ function normVal(s) {
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 }
 
+// Item 3-B da devolutiva do Allan (Slack, 2026-09-11): mapa de família de
+// tipo_reuniao em 2 dimensões -- natureza (aquisição/pós-venda/excluir) e
+// quem conduz (SDR/Closer/Consultor). RAW.reunioes une duas taxonomias
+// diferentes (os 4 valores do Salesforce -- SDR/Closer/Consultor/Sem tipo --
+// e os 31 valores do histórico da planilha, sql/006), e o filtro padrão
+// "Tipo de Reunião" (Closer+Consultor) só reconhecia os valores literais do
+// Salesforce -- todo o histórico ficava escondido da visão padrão sem
+// ninguém perceber. Classificações abaixo confirmadas pelo Allan onde
+// indicado; grandes categorias ainda sem "quem conduz" confirmado
+// (Pré-qualificação, "[ADV] Reagendamento No-Show", Social Selling,
+// Consultoria Journey One, Apresentação Suno *, "[ADV] Follow-up") ficam de
+// fora da pré-seleção padrão -- mesmo tratamento hoje dado a SDR/Sem tipo --
+// até o Rafael/Allan confirmarem, em vez de eu adivinhar e arriscar mexer em
+// milhares de registros sem decisão de negócio.
+const FAMILIA_NATUREZA_REUNIAO = {
+  // Pós-venda (Allan confirmou -- recorte do painel é aquisição, essas ficam fora)
+  'Acompanhamento Consultoria': 'posvenda',
+  'Acompanhamento Wealth': 'posvenda',
+  'Alocação JB': 'posvenda',
+  'Entrevista JB': 'posvenda',
+  'Welcome Call - Grupo Elite': 'posvenda',
+  // Inferência (não confirmada pelo Allan) -- padrão de nome "JB"/pós-venda
+  // consistente com os itens acima; revisar se o Rafael discordar.
+  'Apresentação JB': 'posvenda',
+  'Retorno ao cliente': 'posvenda',
+  // Não é reunião -- é registro de toque (Allan), removida em loadData().
+  'Mensagem whatsapp': 'excluir',
+};
+function naturezaReuniao(tipo) { return FAMILIA_NATUREZA_REUNIAO[tipo] || 'aquisicao'; }
+
+const FAMILIA_QUEM_CONDUZ_REUNIAO = {
+  // Confirmado pelo Allan: mesma natureza do SDR já excluído por padrão
+  // (prospecção/triagem, não avanço real de funil).
+  'Primeiro contato': 'SDR',
+  'Nova tentativa de contato': 'SDR',
+  '[ADV] Agendamentos SDR': 'SDR',
+  '[ADV] Agendamentos SDR - Sessão Estratégica': 'SDR',
+  // Nome explícito de Consultor/Closer no histórico da planilha -- mesmo
+  // papel dos valores 'Consultor'/'Closer' que já vêm nativos do Salesforce.
+  '[ADV] Consultores': 'Consultor',
+  '[ADV] Reagendamento Consultores': 'Consultor',
+  // Confirmado pelo Allan (distribuição temporal espalhada por 5 meses,
+  // 2026-09-11): reunião real com nome ruim, não teste -- ver sql/README.md.
+  'Teste Reunião Closer': 'Closer',
+};
+// Valores do Salesforce (Closer/Consultor/SDR/Sem tipo) já batem literal --
+// só os valores do histórico mapeados acima precisam de tradução.
+function quemConduzReuniao(tipo) { return FAMILIA_QUEM_CONDUZ_REUNIAO[tipo] || tipo; }
+
 // Fix 2026-09-10 (decisão do Allan, achada na devolutiva técnica): 'confirmada'
 // e 'adiantada' também contam como reunião realizada -- status reais do
 // ServiceAppointment.Status__c não cobertos antes (Realizada 1.148 já entrava;
@@ -1103,7 +1152,17 @@ function detectSdrCloserColumns() {
   // função de novo a cada atualização).
   if (!tipoReuniaoDefaultApplied && TIPO_IN_REUNIOES) {
     const tiposDisponiveis = new Set(RAW.reunioes.map(r => r.tipo_reuniao).filter(v => v));
-    const defaultTipos = ['Closer', 'Consultor'].filter(t => tiposDisponiveis.has(t));
+    // Fix 2026-09-11 (item 3-B, mapa de família): antes só reconhecia os
+    // valores literais 'Closer'/'Consultor' do Salesforce -- os 31 valores do
+    // histórico da planilha (sql/006) usam nomes diferentes pro mesmo papel
+    // (ex.: "[ADV] Consultores", "Teste Reunião Closer") e ficavam de fora da
+    // pré-seleção padrão, escondendo reuniões históricas de Closer/Consultor
+    // sem o usuário perceber. Também respeita a natureza (pós-venda fica de
+    // fora do padrão, mesmo que fosse conduzida por Closer/Consultor).
+    const defaultTipos = [...tiposDisponiveis].filter(t =>
+      naturezaReuniao(t) !== 'posvenda' &&
+      ['Closer', 'Consultor'].includes(quemConduzReuniao(t))
+    );
     if (defaultTipos.length) SEL.tipoReuniao = new Set(defaultTipos);
     tipoReuniaoDefaultApplied = true;
   }
@@ -1208,7 +1267,10 @@ async function loadData() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     RAW.leads         = data.leads        || [];
-    RAW.reunioes      = data.reunioes     || [];
+    // Item 3-B (mapa de família, sql/README.md): "Mensagem whatsapp" não é
+    // reunião -- é registro de toque (confirmado pelo Allan) -- removida
+    // aqui pra não poluir contagem de reuniões nem o total de tipos distintos.
+    RAW.reunioes      = (data.reunioes || []).filter(r => naturezaReuniao(r.tipo_reuniao) !== 'excluir');
     RAW.vendas        = data.vendas       || [];
     RAW.metaCaptacao  = data.metaCaptacao || [];
     RAW.metaLeads     = data.metaLeads    || [];

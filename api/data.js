@@ -307,6 +307,12 @@ async function loadFromSnowflake() {
   `);
   const leads = leadRows.map(mapLead);
 
+  // Fix 2026-09-11 (sql/025, achado do Allan): não existia corte de data
+  // explícito entre esta fonte (histórico pré-corte) e VW_REUNIOES_SALESFORCE
+  // (Salesforce, a partir de 2026-05-29) -- batia por coincidência de estado
+  // (3.893 + 17.434 = 21.327, sem sobreposição), mas há sobreposição real:
+  // 35 linhas aqui têm DATA_ATIVIDADE >= 2026-05-29. Filtro explícito evita
+  // dupla contagem se a fonte mudar de estado no futuro.
   const reuniaoHistRows = await query(`
     SELECT
       NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL,
@@ -314,6 +320,7 @@ async function loadFromSnowflake() {
       TO_VARCHAR(DATA_ATIVIDADE, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_ATIVIDADE,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_CRIACAO
     FROM FATO_REUNIAO_HIST_PLANILHA
+    WHERE DATA_ATIVIDADE < '2026-05-29'
   `);
 
   // Reuniões (a partir de 2026-05-29) vêm de VW_REUNIOES_SALESFORCE (2026-09-09),
