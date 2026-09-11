@@ -1109,6 +1109,15 @@ const FAMILIA_QUEM_CONDUZ_REUNIAO = {
   // Confirmado pelo Allan (distribuição temporal espalhada por 5 meses,
   // 2026-09-11): reunião real com nome ruim, não teste -- ver sql/README.md.
   'Teste Reunião Closer': 'Closer',
+  // Fix 2026-09-11 (achado do Allan, e-mail na thread "Painel de
+  // Consultoria"): Social Selling é canal de aquisição via abordagem ativa
+  // do SDR no Instagram (não é mídia paga, por isso não gera UTM -- mas a
+  // origem existe, só em outros campos). O filtro padrão "Closer + Consultor"
+  // excluía Social Selling por padrão sem intenção -- ele não é SDR (que
+  // continua fora, é prospecção/triagem) nem Closer/Consultor -- é seu
+  // próprio canal de aquisição e precisa aparecer na visão padrão do painel.
+  'Social Selling - Sessão Estratégica': 'SocialSelling',
+  'Social Selling - Aplicação': 'SocialSelling',
 };
 // Valores do Salesforce (Closer/Consultor/SDR/Sem tipo) já batem literal --
 // só os valores do histórico mapeados acima precisam de tradução.
@@ -1159,9 +1168,13 @@ function detectSdrCloserColumns() {
     // pré-seleção padrão, escondendo reuniões históricas de Closer/Consultor
     // sem o usuário perceber. Também respeita a natureza (pós-venda fica de
     // fora do padrão, mesmo que fosse conduzida por Closer/Consultor).
+    // Fix 2026-09-11 (achado do Allan, mesmo dia): Social Selling também
+    // entra por padrão -- é canal de aquisição próprio (SDR ativo, sem
+    // mídia paga), não deveria ficar escondido junto com o SDR de
+    // prospecção/triagem que o Rafael pediu para excluir.
     const defaultTipos = [...tiposDisponiveis].filter(t =>
       naturezaReuniao(t) !== 'posvenda' &&
-      ['Closer', 'Consultor'].includes(quemConduzReuniao(t))
+      ['Closer', 'Consultor', 'SocialSelling'].includes(quemConduzReuniao(t))
     );
     if (defaultTipos.length) SEL.tipoReuniao = new Set(defaultTipos);
     tipoReuniaoDefaultApplied = true;
