@@ -2757,19 +2757,29 @@ function renderCohortLeads() {
   // usado -- a Cohort classificava a safra pela data errada na maioria das
   // vendas. Medido em produção: agosto/2026 tinha 100 "vendas" na safra pelo
   // método antigo vs 50 pelo método correto -- quase o dobro de sobrecontagem.
-  // Nova prioridade: v.data_lead (data real do Lead casado por e-mail,
-  // sql/031) → lookup por e-mail em RAW.leads (mesmo fallback de antes, pega
-  // casos que o join do sql/031 não resolveu) → data_venda (mesmo mês,
-  // conversão no mesmo período, último recurso). Opportunity.CreatedDate não
-  // entra mais nessa decisão.
+  //
+  // Fix 2026-09-16 (2ª rodada, o próprio Rafael achou em produção): mesmo
+  // depois do fix acima, ainda aparecia venda numa safra posterior à própria
+  // venda (ex.: safra Ago/26 com venda em Jul/26) -- o fallback por e-mail
+  // (emailToCriacao, busca em RAW.leads) não tinha a trava "lead não pode
+  // ser depois da venda" que o sql/035 aplicou no lado SQL -- reintroduzia o
+  // mesmo bug por outro caminho quando v.data_lead vinha NULL (sem Lead
+  // válido). Agora o fallback só aceita o lead do e-mail se a data dele for
+  // <= a data da venda -- mesma regra do sql/035, dos dois lados.
+  //
+  // Prioridade final: v.data_lead (sql/031/035, já respeita a regra) →
+  // lookup por e-mail em RAW.leads SE anterior à venda → data_venda (mesmo
+  // mês, último recurso, nunca inventa uma data posterior à venda).
+  // Opportunity.CreatedDate não entra mais nessa decisão.
   vendas.forEach(v => {
+    const venda = parseDate(v.data_venda, VENDA_DATE_FMT);
+    if (!venda) return; // cannot place without sale date
     let criacao = parseDate(v.data_lead);
     if (!criacao) {
       const em = (v.email||'').toLowerCase().trim();
-      if (em) criacao = emailToCriacao[em] || null;
+      const emailCriacao = em ? (emailToCriacao[em] || null) : null;
+      if (emailCriacao && emailCriacao <= venda) criacao = emailCriacao;
     }
-    const venda = parseDate(v.data_venda, VENDA_DATE_FMT);
-    if (!venda) return; // cannot place without sale date
     // If we still have no criacao, use data_venda as the safra month (same-month conversion)
     if (!criacao) criacao = venda;
     const safraMK = monthKey(criacao);
