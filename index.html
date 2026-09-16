@@ -2748,9 +2748,22 @@ function renderCohortLeads() {
   });
 
   // Assign each venda to its safra
-  // Priority: venda's own data_criacao → lookup by email in leads → use data_venda month as safra
+  // Fix 2026-09-16 (Rafael, reunião Fathom 14/09): "um lead não pode comprar
+  // antes de ser gerado" -- a prioridade antiga usava v.data_criacao, que em
+  // Vendas é a data de criação da OPORTUNIDADE (Opportunity.CreatedDate), não
+  // a data do Lead -- mesma confusão estrutural corrigida no filtro "Data do
+  // Lead" (sql/031). Como data_criacao da Oportunidade quase sempre existe, o
+  // fallback por e-mail (que buscava a data real do lead) quase nunca era
+  // usado -- a Cohort classificava a safra pela data errada na maioria das
+  // vendas. Medido em produção: agosto/2026 tinha 100 "vendas" na safra pelo
+  // método antigo vs 50 pelo método correto -- quase o dobro de sobrecontagem.
+  // Nova prioridade: v.data_lead (data real do Lead casado por e-mail,
+  // sql/031) → lookup por e-mail em RAW.leads (mesmo fallback de antes, pega
+  // casos que o join do sql/031 não resolveu) → data_venda (mesmo mês,
+  // conversão no mesmo período, último recurso). Opportunity.CreatedDate não
+  // entra mais nessa decisão.
   vendas.forEach(v => {
-    let criacao = parseDate(v.data_criacao);
+    let criacao = parseDate(v.data_lead);
     if (!criacao) {
       const em = (v.email||'').toLowerCase().trim();
       if (em) criacao = emailToCriacao[em] || null;
