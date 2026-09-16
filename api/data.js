@@ -168,6 +168,7 @@ function mapNegocio(r) {
     valor: str(r.VALOR),
     data_criacao: str(r.DATA_CRIACAO),
     data_venda: str(r.DATA_CONTRATACAO),
+    data_lead: str(r.DATA_LEAD), // só populado em vendas (VW_VENDAS_SALESFORCE, sql/031) -- data de criação do Lead casado por e-mail, usada pelo filtro global "Criação" em Vendas/Funil (passGlobalVendas() no painel)
     sdr_responsavel: str(r.SDR_RESPONSAVEL),
     closer_responsavel: str(r.CLOSER_RESPONSAVEL),
     etapa_do_negocio: normalizeEtapa(str(r.STAGE_NAME)),
@@ -287,7 +288,8 @@ async function loadFromSnowflake() {
       PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO, TIPO_REUNIAO,
       SDR_RESPONSAVEL, CLOSER_RESPONSAVEL,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
-      TO_VARCHAR(DATA_VENDA, 'YYYY-MM-DD') AS DATA_CONTRATACAO
+      TO_VARCHAR(DATA_VENDA, 'YYYY-MM-DD') AS DATA_CONTRATACAO,
+      TO_VARCHAR(DATA_LEAD, 'YYYY-MM-DD') AS DATA_LEAD
     FROM VW_VENDAS_SALESFORCE
   `);
   const vendas = vendaRows.map(mapNegocio);

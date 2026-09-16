@@ -1421,17 +1421,33 @@ function filteredReuniones() {
   return dedupReunioes(RAW.reunioes.filter(r => passGlobal(r) && passSdrCloser(r, SDR_IN_REUNIOES, CLOSER_IN_REUNIOES, TIPO_IN_REUNIOES)));
 }
 
-// Vendas: global filter + optional venda-date filter.
-// For the global date filter (F.di/F.df), vendas may not have data_criacao;
-// fall back to data_venda so they are not erroneously excluded.
+// Vendas: filtro global (Data do Lead) + filtro exclusivo de Data da Venda (F.vdi/F.vdf).
 function passGlobalVendas(row) {
   if (F.di || F.df) {
-    // Fix 2026-09-10 (decisão do Allan): data oficial da venda é sempre
-    // DataInicioContrato (data_venda), nunca data_criacao do lead -- antes,
-    // data_criacao tinha precedência e causava descompasso entre abas (ex.:
-    // "safra de agosto com venda em julho" no Cohort, quando CloseDate e
-    // DataInicioContrato divergem de mês).
-    const d = parseDate(row.data_venda, VENDA_DATE_FMT);
+    // Fix 2026-09-16 (Rafael, reunião Fathom 14/09): o rótulo do filtro
+    // global é "Criação" -- ele esperava ver só vendas de leads criados no
+    // período (ex.: 15 vendas de leads de setembro), mas o filtro estava
+    // olhando data_venda (DataInicioContrato) e mostrava as 49 vendas
+    // FECHADAS no período, não as originadas nele. Volta a filtrar por
+    // data_lead (data de criação do Lead casado, sql/031) -- que é o que o
+    // rótulo "Criação" sempre quis dizer nas outras abas (Leads/Negociação).
+    //
+    // Antes (Fix 2026-09-10, decisão do Allan) esse filtro olhava data_venda
+    // porque data_criacao (da OPORTUNIDADE, não do Lead) causava descompasso
+    // de safra no Cohort ("venda em julho contada na safra de agosto"). Essa
+    // preocupação não se aplica aqui: data_lead é uma dimensão diferente (o
+    // Lead que originou a venda, resolvido por e-mail em sql/026/030/031),
+    // e a aba Cohort já reconstrói a data do lead por conta própria via
+    // RAW.leads -- não depende deste filtro.
+    //
+    // Decisão explícita do Rafael (verbatim, call 14/09): quando o filtro
+    // de data está ativo, venda sem Lead casado (data_lead nulo, ~56% da
+    // base, ver sql/026) É EXCLUÍDA -- ao contrário do padrão "não filtra
+    // dimensão desconhecida" usado em outros filtros deste painel (Tipo de
+    // Reunião, Negociação). Aqui é o oposto por pedido explícito dele:
+    // "ele nem deveria mostrar nada aqui... deveria estar pegando só
+    // setembro".
+    const d = parseDate(row.data_lead, VENDA_DATE_FMT);
     if (!d) return false;
     if (F.di && d < F.di) return false;
     if (F.df && d > F.df) return false;
