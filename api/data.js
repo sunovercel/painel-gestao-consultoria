@@ -82,8 +82,10 @@
 //    reuniões sem e-mail correspondente a um Lead ficam sem DATA_CRIACAO e só
 //    aparecem quando nenhum filtro de Criação está ativo. sdr_responsavel/
 //    closer_responsavel (sql/029, 2026-09-16) só vêm preenchidos quando o SA
-//    tem pai Opportunity (Opportunity.SDRQueAgendou_c__c/CloserIraAtuar_c__c
-//    -- ServiceAppointment em si só tem OwnerId, sem nome do responsável).
+//    tem pai Opportunity (Opportunity.SDRQueAgendou_c__c/OwnerId__c ->
+//    User_Home__dll.Name__c, esse último corrigido em sql/036 em 2026-09-17
+//    -- CloserIraAtuar_c__c, usado antes, era booleano Sim/Não, nunca teve
+//    nome de pessoa. ServiceAppointment em si só tem OwnerId, sem nome).
 //  - "prioridade" não existe em nenhum objeto do Salesforce -- Forecast
 //    roda sem segmentação por prioridade (tudo cai em "(Sem prioridade)").
 
@@ -212,7 +214,7 @@ function mapReuniaoSalesforce(r) {
     fonte_original_pipe: str(r.FONTE_AQUISICAO), // idem
     canal_originador: str(r.CANAL), // canal de AGENDAMENTO da reunião (ServiceAppointment) -- conceito distinto do canal de conexão do Lead
     sdr_responsavel: str(r.SDR_RESPONSAVEL), // Opportunity.SDRQueAgendou_c__c via join (sql/029) -- só preenchido quando o SA tem pai Opportunity
-    closer_responsavel: str(r.CLOSER_RESPONSAVEL), // Opportunity.CloserIraAtuar_c__c via join (sql/029) -- idem
+    closer_responsavel: str(r.CLOSER_RESPONSAVEL), // Opportunity.OwnerId__c -> User_Home__dll.Name__c (sql/036) -- CloserIraAtuar_c__c (usado até 2026-09-16) era booleano Sim/Não, nunca teve nome
     data_criacao: str(r.DATA_CRIACAO), // data de criação do LEAD (via join por e-mail na view), não da própria reunião
     data_da_atividade: str(r.DATA_ATIVIDADE),
     status_reuniao: str(r.STATUS_REUNIAO),
@@ -341,9 +343,12 @@ async function loadFromSnowflake() {
   // sql/014 e sql/015). Limitação conhecida:
   // Email__c só é preenchido em 61% das ServiceAppointment -- reuniões sem e-mail
   // correspondente a um Lead ficam sem DATA_CRIACAO e só aparecem quando nenhum
-  // filtro de Criação está ativo. sdr_responsavel/closer_responsavel não mapeados
-  // (ServiceAppointment só tem OwnerId, sem nome). Ver sql/README.md e
-  // sql/013_criar_vw_reunioes_salesforce.sql no repo Projeto Dados Snow.
+  // filtro de Criação está ativo. sdr_responsavel/closer_responsavel (sql/029,
+  // 036) só vêm preenchidos quando o SA tem pai Opportunity -- Closer vem do
+  // Owner da Oportunidade (Name__c via User_Home__dll), não de um campo
+  // próprio (CloserIraAtuar_c__c é booleano, achado em 2026-09-17). Ver
+  // sql/README.md e sql/013_criar_vw_reunioes_salesforce.sql no repo Projeto
+  // Dados Snow.
   const reuniaoSFRows = await query(`
     SELECT
       NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
