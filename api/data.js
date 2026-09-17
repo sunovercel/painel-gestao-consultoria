@@ -81,8 +81,9 @@
 //    Email__c só é preenchido em 61% das ServiceAppointment (2347/3822) --
 //    reuniões sem e-mail correspondente a um Lead ficam sem DATA_CRIACAO e só
 //    aparecem quando nenhum filtro de Criação está ativo. sdr_responsavel/
-//    closer_responsavel não são mapeados (ServiceAppointment só tem OwnerId,
-//    sem nome do responsável).
+//    closer_responsavel (sql/029, 2026-09-16) só vêm preenchidos quando o SA
+//    tem pai Opportunity (Opportunity.SDRQueAgendou_c__c/CloserIraAtuar_c__c
+//    -- ServiceAppointment em si só tem OwnerId, sem nome do responsável).
 //  - "prioridade" não existe em nenhum objeto do Salesforce -- Forecast
 //    roda sem segmentação por prioridade (tudo cai em "(Sem prioridade)").
 
@@ -210,8 +211,8 @@ function mapReuniaoSalesforce(r) {
     deal_utm_source: str(r.UTM_SOURCE), // vem do Lead via join (sql/018) -- antes vinha sempre vazio
     fonte_original_pipe: str(r.FONTE_AQUISICAO), // idem
     canal_originador: str(r.CANAL), // canal de AGENDAMENTO da reunião (ServiceAppointment) -- conceito distinto do canal de conexão do Lead
-    sdr_responsavel: '', // ServiceAppointment só tem OwnerId (sem nome) -- não mapeado
-    closer_responsavel: '', // idem
+    sdr_responsavel: str(r.SDR_RESPONSAVEL), // Opportunity.SDRQueAgendou_c__c via join (sql/029) -- só preenchido quando o SA tem pai Opportunity
+    closer_responsavel: str(r.CLOSER_RESPONSAVEL), // Opportunity.CloserIraAtuar_c__c via join (sql/029) -- idem
     data_criacao: str(r.DATA_CRIACAO), // data de criação do LEAD (via join por e-mail na view), não da própria reunião
     data_da_atividade: str(r.DATA_ATIVIDADE),
     status_reuniao: str(r.STATUS_REUNIAO),
@@ -346,6 +347,7 @@ async function loadFromSnowflake() {
   const reuniaoSFRows = await query(`
     SELECT
       NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
+      SDR_RESPONSAVEL, CLOSER_RESPONSAVEL,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
       TO_VARCHAR(DATA_ATIVIDADE, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_ATIVIDADE
     FROM VW_REUNIOES_SALESFORCE
