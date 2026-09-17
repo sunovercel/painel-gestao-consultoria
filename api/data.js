@@ -159,7 +159,7 @@ function mapNegocio(r) {
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
-    complemento_estrategia: str(r.COMPLEMENTO_ESTRATEGIA), // só populado em vendas (VW_VENDAS_SALESFORCE) -- ver passGlobalVendas() no painel
+    complemento_estrategia: str(r.COMPLEMENTO_ESTRATEGIA), // Opportunity.ComplementoDaEstrategia_c__c -- desde sql/038 (2026-09-17) o mesmo conceito/valores também existe em Leads/Reuniões (ver mapLead/mapReuniaoSalesforce)
     deal_utm_source: str(r.UTM_SOURCE),
     deal_utm_medium: str(r.UTM_MEDIUM),
     deal_utm_campaign: str(r.UTM_CAMPAIGN),
@@ -186,6 +186,7 @@ function mapLead(r) {
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
+    complemento_estrategia: str(r.COMPLEMENTO_ESTRATEGIA), // Lead.ComplementoEstrategia_c__c (sql/038) -- mesmo conceito/valores do Complemento de Vendas, nome de campo levemente diferente entre os objetos
     deal_utm_source: str(r.UTM_SOURCE),
     deal_utm_medium: str(r.UTM_MEDIUM),
     deal_utm_campaign: str(r.UTM_CAMPAIGN),
@@ -210,6 +211,7 @@ function mapReuniaoSalesforce(r) {
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
+    complemento_estrategia: str(r.COMPLEMENTO_ESTRATEGIA), // Lead.ComplementoEstrategia_c__c via join (sql/038, mesmo join usado pra FUNIL/ESTRATEGIA) -- vazio quando a reunião não casa com nenhum Lead
     deal_utm_source: str(r.UTM_SOURCE), // vem do Lead via join (sql/018) -- antes vinha sempre vazio
     fonte_original_pipe: str(r.FONTE_AQUISICAO), // idem
     canal_originador: str(r.CANAL), // canal de AGENDAMENTO da reunião (ServiceAppointment) -- conceito distinto do canal de conexão do Lead
@@ -245,6 +247,7 @@ function mapReuniaoHistorica(r) {
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
+    complemento_estrategia: '', // não existe em FATO_REUNIAO_HIST_PLANILHA (sql/006) -- carga histórica anterior ao Salesforce, sem esse campo
     deal_utm_source: str(r.UTM_SOURCE),
     fonte_original_pipe: str(r.FONTE_AQUISICAO),
     canal_originador: str(r.CANAL),
@@ -322,7 +325,7 @@ async function loadFromSnowflake() {
   // no repo Projeto Dados Snow.
   const leadRows = await query(`
     SELECT
-      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, STAGE_NAME,
+      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, COMPLEMENTO_ESTRATEGIA, STAGE_NAME,
       FONTE_AQUISICAO, CANAL, UTM_SOURCE, UTM_MEDIUM, UTM_CAMPAIGN,
       PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO
@@ -368,7 +371,7 @@ async function loadFromSnowflake() {
   // Dados Snow.
   const reuniaoSFRows = await query(`
     SELECT
-      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
+      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, COMPLEMENTO_ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
       SDR_RESPONSAVEL, CLOSER_RESPONSAVEL,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
       TO_VARCHAR(DATA_ATIVIDADE, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_ATIVIDADE

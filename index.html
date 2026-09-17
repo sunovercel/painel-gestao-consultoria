@@ -362,7 +362,7 @@ tr:hover td{background:#FAFAFA}
         <div class="multi-select" id="ms-estrategia"></div>
       </div>
       <div class="filter-group">
-        <label class="filter-label">Complemento Estratégia (Venda)</label>
+        <label class="filter-label">Complemento Estratégia</label>
         <div class="multi-select" id="ms-complementoestrategia"></div>
       </div>
       <div class="filter-group">
@@ -456,6 +456,7 @@ tr:hover td{background:#FAFAFA}
         <div class="toggle-group" id="leads-toggle">
           <button class="toggle-btn active" data-breakdown="funil">Funil</button>
           <button class="toggle-btn" data-breakdown="estrategia">Estratégia</button>
+          <button class="toggle-btn" data-breakdown="complemento_estrategia">Complemento Estratégia</button>
           <button class="toggle-btn" data-breakdown="deal_utm_source">Source</button>
           <button class="toggle-btn" data-breakdown="fonte_original_pipe">Fonte Orig.</button>
           <button class="toggle-btn" data-breakdown="canal_originador">Canal Orig.</button>
@@ -524,6 +525,7 @@ tr:hover td{background:#FAFAFA}
           <button class="toggle-btn" data-subview="deal_utm_source">Source</button>
           <button class="toggle-btn" data-subview="funil">Funil</button>
           <button class="toggle-btn" data-subview="estrategia">Estratégia</button>
+          <button class="toggle-btn" data-subview="complemento_estrategia">Complemento Estratégia</button>
           <button class="toggle-btn" data-subview="fonte_original_pipe">Fonte Orig.</button>
           <button class="toggle-btn" data-subview="closer_responsavel">Closer</button>
         </div>
@@ -696,6 +698,7 @@ tr:hover td{background:#FAFAFA}
         <button class="toggle-btn" data-rbreakdown="deal_utm_source">Source</button>
         <button class="toggle-btn" data-rbreakdown="funil">Funil</button>
         <button class="toggle-btn" data-rbreakdown="estrategia">Estratégia</button>
+        <button class="toggle-btn" data-rbreakdown="complemento_estrategia">Complemento Estratégia</button>
         <button class="toggle-btn" data-rbreakdown="fonte_original_pipe">Fonte Orig.</button>
         <button class="toggle-btn" data-rbreakdown="closer_responsavel">Closer</button>
         <button class="toggle-btn" data-rbreakdown="sdr_responsavel">SDR</button>
@@ -857,7 +860,7 @@ const SEL = {
   closerResponsavel:    new Set(),
   sdrResponsavel:       new Set(),
   tipoReuniao:          new Set(),
-  complementoEstrategia: new Set(), // só existe em vendas -- filtra exclusivamente os números de Vendas (ver passGlobalVendas)
+  complementoEstrategia: new Set(), // Vendas/Leads/Reuniões (sql/038) -- não existe em Reuniões históricas pré-Salesforce nem em Negociação
 };
 
 const F = {   // active filter values
@@ -1377,6 +1380,10 @@ function passGlobal(row) {
   if (SEL.fonteOriginalPipe.size > 0 && !SEL.fonteOriginalPipe.has(row.fonte_original_pipe)) return false;
   if (SEL.canalOriginador.size   > 0 && !SEL.canalOriginador.has(row.canal_originador))  return false;
   if (SEL.patrimonio.size        > 0 && !SEL.patrimonio.has(row.patrimonio_investido_grupo)) return false;
+  // Complemento de Estratégia (sql/038, pedido do Rafael 17/09): estendido de
+  // Vendas para Leads/Reuniões também -- aplica aqui igual aos outros campos,
+  // fica vazio (não filtra) em Reuniões históricas pré-Salesforce (mapReuniaoHistorica).
+  if (SEL.complementoEstrategia.size > 0 && !SEL.complementoEstrategia.has(row.complemento_estrategia)) return false;
   return true;
 }
 
@@ -1460,8 +1467,7 @@ function passGlobalVendas(row) {
   if (SEL.patrimonio.size        > 0 && !SEL.patrimonio.has(row.patrimonio_investido_grupo)) return false;
   if (SEL.closerResponsavel.size > 0 && !SEL.closerResponsavel.has(row.closer_responsavel)) return false;
   if (SEL.sdrResponsavel.size    > 0 && !SEL.sdrResponsavel.has(row.sdr_responsavel))    return false;
-  // Complemento de Estratégia só existe no objeto Opportunity (vendas) -- filtro
-  // exclusivo de vendas, de propósito não replicado em passGlobal/passGlobalNegociacao.
+  // Complemento de Estratégia (sql/038): também aplicado em passGlobal (Leads/Reuniões).
   if (SEL.complementoEstrategia.size > 0 && !SEL.complementoEstrategia.has(row.complemento_estrategia)) return false;
   return true;
 }
@@ -2378,11 +2384,12 @@ function renderVendasOrigem(vendas) {
 
 // Quebras adicionais da Diária de Vendas (além de Metas Captação / Origem)
 const VENDAS_BREAKDOWNS = [
-  { field:'deal_utm_source',     label:'Source' },
-  { field:'funil',               label:'Funil' },
-  { field:'estrategia',          label:'Estratégia' },
-  { field:'fonte_original_pipe', label:'Fonte Orig.' },
-  { field:'closer_responsavel',  label:'Closer' },
+  { field:'deal_utm_source',       label:'Source' },
+  { field:'funil',                 label:'Funil' },
+  { field:'estrategia',            label:'Estratégia' },
+  { field:'complemento_estrategia', label:'Complemento Estratégia' },
+  { field:'fonte_original_pipe',   label:'Fonte Orig.' },
+  { field:'closer_responsavel',    label:'Closer' },
 ];
 
 // Tabela: captação / quantidade / PL médio por valor da dimensão.
@@ -3073,6 +3080,7 @@ function renderCohortTombamento() {
 const PIVOT_DIMS = [
   { key:'deal_utm_source',            label:'Source' },
   { key:'estrategia',                 label:'Estratégia' },
+  { key:'complemento_estrategia',     label:'Complemento Estratégia' },
   { key:'funil',                      label:'Funil' },
   { key:'patrimonio_investido_grupo', label:'Patrimônio' },
   { key:'fonte_original_pipe',        label:'Fonte Orig.' },
@@ -3134,6 +3142,7 @@ const PIVOT_DIM_SEL_KEY = {
   deal_utm_source:'source', estrategia:'estrategia', funil:'funil',
   patrimonio_investido_grupo:'patrimonio', fonte_original_pipe:'fonteOriginalPipe',
   canal_originador:'canalOriginador', closer_responsavel:'closerResponsavel', sdr_responsavel:'sdrResponsavel',
+  complemento_estrategia:'complementoEstrategia',
 };
 // Extratores de valor por coluna, para ordenação por clique no cabeçalho (rate ausente = -1 → vai pro fim no desc)
 const PIVOT_SORT_VAL = {
