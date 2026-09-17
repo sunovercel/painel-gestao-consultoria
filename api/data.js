@@ -222,6 +222,23 @@ function mapReuniaoSalesforce(r) {
   };
 }
 
+// Fix 2026-09-17 (achado do Paulo comparando o filtro "Closer (Venda)" em
+// produção): FATO_REUNIAO_HIST_PLANILHA (carga única, sql/006, dados de
+// antes de 2026-05-29) grafa alguns Closers COM acento ("André Gomes",
+// "André Candido"), enquanto o Salesforce ao vivo (User_Home__dll.Name__c,
+// via sql/036) tem o mesmo nome SEM acento ("Andre Gomes", "Andre
+// Candido") -- fragmentava a mesma pessoa em duas opções no filtro.
+// Medido nesta sessão via /api/data em produção: só esses 2 nomes, só em
+// closer_responsavel (sdr_responsavel e vendas não têm o problema).
+// Normaliza pro valor SEM acento (fonte de verdade atual, Salesforce).
+const CLOSER_HIST_ACCENT_FIX = {
+  'André Gomes': 'Andre Gomes',
+  'André Candido': 'Andre Candido',
+};
+function normalizeCloserHistorico(v) {
+  return CLOSER_HIST_ACCENT_FIX[v] || v;
+}
+
 function mapReuniaoHistorica(r) {
   return {
     negocio_id: r.NEGOCIO_ID,
@@ -232,7 +249,7 @@ function mapReuniaoHistorica(r) {
     fonte_original_pipe: str(r.FONTE_AQUISICAO),
     canal_originador: str(r.CANAL),
     sdr_responsavel: str(r.SDR_RESPONSAVEL),
-    closer_responsavel: str(r.CLOSER_RESPONSAVEL),
+    closer_responsavel: normalizeCloserHistorico(str(r.CLOSER_RESPONSAVEL)),
     data_criacao: str(r.DATA_CRIACAO),
     data_da_atividade: str(r.DATA_ATIVIDADE || r.DATA_CRIACAO),
     status_reuniao: str(r.STATUS_REUNIAO),
