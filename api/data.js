@@ -106,13 +106,25 @@ let cache = null;
 let cacheAt = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 min -- evita bater no Snowflake a cada carregamento de página
 
+// Chave privada PKCS#8 (PEM). Aceita quebras reais ou `\n` literal (formato de .env).
+const SF_PRIVATE_KEY = (process.env.SNOWFLAKE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+// Key-pair quando a chave existe; senha só como fallback. Em 2026-09-22 o
+// Snowflake passou a exigir MFA no login com senha dos usuários de integração
+// e os painéis pararam de atualizar. Key-pair (SNOWFLAKE_JWT) não passa por MFA.
+function authOptions() {
+  return SF_PRIVATE_KEY
+    ? { authenticator: 'SNOWFLAKE_JWT', privateKey: SF_PRIVATE_KEY }
+    : { password: process.env.SNOWFLAKE_PASSWORD };
+}
+
 function getConnection() {
   return new Promise((resolve, reject) => {
     if (cachedConnection) return resolve(cachedConnection);
     const conn = snowflake.createConnection({
       account: process.env.SNOWFLAKE_ACCOUNT,
       username: process.env.SNOWFLAKE_USER,
-      password: process.env.SNOWFLAKE_PASSWORD,
+      ...authOptions(),
       warehouse: process.env.SNOWFLAKE_WAREHOUSE,
       role: process.env.SNOWFLAKE_ROLE,
       database: 'ANALYTICS',
