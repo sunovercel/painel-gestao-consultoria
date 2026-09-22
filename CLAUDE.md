@@ -34,8 +34,13 @@ uma função serverless que conecta no Snowflake (precisa das env vars
 - **Sempre passar a URL de produção** para usuários — URLs de preview do Vercel (`*-hash.vercel.app`) congelam na versão do deploy
 - **Deployment Protection:** desativado — não reativar, bloqueia usuários após limparem cookies
 - Env vars necessárias na Vercel: `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`,
-  `SNOWFLAKE_PASSWORD`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_ROLE` (role
+  `SNOWFLAKE_PRIVATE_KEY`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_ROLE` (role
   dedicada de leitura em `ANALYTICS.CONSULTORIA` -- nunca `ACCOUNTADMIN`)
+- Autenticação por key-pair (`SNOWFLAKE_JWT`) desde 2026-09-22, quando o
+  Snowflake passou a exigir MFA no login com senha. `SNOWFLAKE_PRIVATE_KEY` é
+  o PEM PKCS#8 inteiro; a chave pública precisa estar no usuário
+  (`ALTER USER ... SET RSA_PUBLIC_KEY`). `SNOWFLAKE_PASSWORD` só é usado como
+  fallback se a chave não estiver configurada.
 
 ## Fonte de dados
 
