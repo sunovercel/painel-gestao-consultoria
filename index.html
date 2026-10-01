@@ -393,14 +393,6 @@ tr:hover td{background:#FAFAFA}
         <label class="filter-label">Tipo de Reunião</label>
         <div class="multi-select" id="ms-tiporeuniao"></div>
       </div>
-      <div class="filter-group">
-        <label class="filter-label">Contar reuniões por</label>
-        <div class="toggle-group" id="reuniao-count-toggle">
-          <button class="toggle-btn active" data-countmode="negocio">Negócio</button>
-          <button class="toggle-btn" data-countmode="email">Contato</button>
-          <button class="toggle-btn" data-countmode="emailtipo">Email+Tipo</button>
-        </div>
-      </div>
       <button class="btn-clear" onclick="clearFilters()">✕ Limpar</button>
     </div>
 
@@ -685,12 +677,27 @@ tr:hover td{background:#FAFAFA}
       <div class="card-head">
         <div>
           <div class="card-title" id="reunioes-chart-title">Volume de Reuniões</div>
-          <div class="card-sub">Por data da atividade · empilhado pelo parâmetro selecionado</div>
+          <div class="card-sub" id="reunioes-chart-sub">Por data da atividade · empilhado pelo parâmetro selecionado</div>
         </div>
         <div class="toggle-group" id="reunioes-time-toggle">
           <button class="toggle-btn" data-rtimemode="dia">Diário</button>
           <button class="toggle-btn" data-rtimemode="semana">Semanal</button>
           <button class="toggle-btn active" data-rtimemode="mes">Mensal</button>
+        </div>
+      </div>
+      <!-- Fix 2026-10-01 (reunião Rafael/Lucas 24/09): perspectiva de contagem --
+           "Oportunidades" (Oportunidade Salesforce distinta, mede aquisição) vs.
+           "Service Appointments" (toda reunião agendada, mede capacidade da equipe). -->
+      <div class="toggle-group" id="reunioes-perspectiva-toggle" style="margin-bottom:12px">
+        <button class="toggle-btn active" data-rperspectiva="oportunidades">Oportunidades</button>
+        <button class="toggle-btn" data-rperspectiva="service_appointments">Service Appointments</button>
+      </div>
+      <div class="filter-group" id="reuniao-count-wrap" style="margin-bottom:16px;display:none">
+        <label class="filter-label">Contar reuniões por</label>
+        <div class="toggle-group" id="reuniao-count-toggle">
+          <button class="toggle-btn active" data-countmode="negocio">Negócio</button>
+          <button class="toggle-btn" data-countmode="email">Contato</button>
+          <button class="toggle-btn" data-countmode="emailtipo">Email+Tipo</button>
         </div>
       </div>
       <div class="toggle-group" id="reunioes-breakdown-toggle" style="margin-bottom:16px;flex-wrap:wrap">
@@ -885,7 +892,8 @@ const STATE = {
   cohortView:        'leads',   // 'leads' (Leads→Vendas) | 'tombamento' (Vendas→Tombamento: Qtd + Valor + PL)
   reunioesBreakdown: 'tipo_reuniao', // empilhamento do gráfico de reuniões
   reunioesTimeMode:  'mes',          // 'dia' | 'semana' | 'mes'
-  reuniaoCountMode:  'negocio',      // 'negocio' | 'email' | 'emailtipo' — como contar reuniões (funil/pivot/aba)
+  reunioesPerspectiva: 'oportunidades', // 'oportunidades' | 'service_appointments' -- só a aba Reuniões (sql/040)
+  reuniaoCountMode:  'negocio',      // 'negocio' | 'email' | 'emailtipo' — como contar Service Appointments (só perspectiva 'service_appointments' da aba Reuniões)
   forecastFactors: { alta:60, media:25, baixa:5 }, // taxas de conversão (%) editáveis do Forecast
   forecastEtapa:   new Set(),        // filtro específico do Forecast: Etapa do negócio
   pivotDims:      [],           // ordem dos parâmetros nas linhas (hierarquia)
@@ -1428,6 +1436,24 @@ function filteredReuniones() {
   return dedupReunioes(RAW.reunioes.filter(r => passGlobal(r) && passSdrCloser(r, SDR_IN_REUNIOES, CLOSER_IN_REUNIOES, TIPO_IN_REUNIOES)));
 }
 
+// Fix 2026-10-01 (reunião Rafael/Lucas 24/09, sql/040): base de reuniões com os
+// mesmos filtros globais/defensivos de sempre, mas SEM dedupe por negócio/e-mail
+// (STATE.reuniaoCountMode) -- usada pra contar Oportunidades DISTINTAS, onde a
+// "chave" de unicidade é a própria Oportunidade (oportunidade_id), não o modo de
+// contagem de reunião escolhido pelo usuário.
+function reunioesComFiltrosGlobais() {
+  return RAW.reunioes.filter(r => passGlobal(r) && passSdrCloser(r, SDR_IN_REUNIOES, CLOSER_IN_REUNIOES, TIPO_IN_REUNIOES));
+}
+
+// Conta Oportunidades (Salesforce) distintas que têm pelo menos 1 reunião em `rows`.
+// Corrige a inflação do funil antigo, que contava linha de reunião (Service
+// Appointment) -- uma Oportunidade com 3 reuniões (inicial/follow-up/reagendamento)
+// inflava a conversão em 3x. Reuniões sem oportunidade_id (pai=Lead/Account, ou os
+// poucos casos residuais sem vínculo nenhum) não entram na contagem.
+function oportunidadesComReuniao(rows) {
+  return new Set(rows.map(r => r.oportunidade_id).filter(Boolean)).size;
+}
+
 // Vendas: filtro global (Data do Lead) + filtro exclusivo de Data da Venda (F.vdi/F.vdf).
 function passGlobalVendas(row) {
   if (F.di || F.df) {
@@ -1927,25 +1953,31 @@ function renderFunil() {
   else       renderFunilComparativo();
 }
 
+// Fix 2026-10-01 (reunião Rafael/Lucas 24/09, sql/040): funil principal
+// simplificado para Lead → Oportunidade → Venda (antes Lead → Reuniões
+// Marcadas → Reuniões Realizadas → Venda) -- "Oportunidade" conta Oportunidades
+// Salesforce DISTINTAS com >= 1 reunião agendada, não linha de reunião. Isso
+// corrige a inflação: uma Oportunidade com 3 reuniões (inicial/follow-up/
+// reagendamento) antes contava 3x nas "Reuniões Marcadas". O funil de
+// eficiência de reuniões (no-show, taxa de realização) fica para uma etapa
+// futura, desenhada por Rafael/Lucas -- fora de escopo aqui.
 function renderFunilGeral() {
-  const leads      = filteredLeads();
-  const reunioes   = filteredReuniones();
-  const realizadas = reunioes.filter(isRealizada);
-  const vendas     = filteredVendas(false);
+  const leads    = filteredLeads();
+  const reunBase = reunioesComFiltrosGlobais();
+  const vendas   = filteredVendas(false);
 
-  const nL = leads.length, nM = reunioes.length, nR = realizadas.length, nV = vendas.length;
+  const nL = leads.length, nO = oportunidadesComReuniao(reunBase), nV = vendas.length;
   const hasTomb = RAW.tombamentos && RAW.tombamentos.length > 0;
   const nT = hasTomb ? filteredTombados().length : 0;
   const maxN = Math.max(nL, 1);
 
   // Metric cards
   const cards = [
-    { label:'Leads',              n:nL, sub:'', color:FUNNEL_CLR[0] },
-    { label:'Reuniões Marcadas',  n:nM, sub:nL?fmtPct(nM/nL)+' dos leads':'—', color:FUNNEL_CLR[1] },
-    { label:'Reuniões Realizadas',n:nR, sub:nM?fmtPct(nR/nM)+' das marcadas':'—', color:FUNNEL_CLR[2] },
-    { label:'Vendas',             n:nV, sub:nR?fmtPct(nV/nR)+' das realizadas':'—', color:FUNNEL_CLR[3] },
+    { label:'Leads',        n:nL, sub:'', color:FUNNEL_CLR[0] },
+    { label:'Oportunidade', n:nO, sub:nL?fmtPct(nO/nL)+' dos leads':'—', color:FUNNEL_CLR[1] },
+    { label:'Vendas',       n:nV, sub:nO?fmtPct(nV/nO)+' das oportunidades':'—', color:FUNNEL_CLR[2] },
   ];
-  if (hasTomb) cards.push({ label:'Tombados', n:nT, sub:nV?fmtPct(nT/nV)+' das vendas':'—', color:FUNNEL_CLR[4] });
+  if (hasTomb) cards.push({ label:'Tombados', n:nT, sub:nV?fmtPct(nT/nV)+' das vendas':'—', color:FUNNEL_CLR[3] });
   document.getElementById('funil-metrics').innerHTML = cards.map(m => `
     <div class="metric-card" style="border-left-color:${m.color}">
       <div class="metric-label">${m.label}</div>
@@ -1955,12 +1987,11 @@ function renderFunilGeral() {
 
   // Funnel bars
   const steps = [
-    { label:'Leads',               n:nL },
-    { label:'Reuniões Marcadas',   n:nM },
-    { label:'Reuniões Realizadas', n:nR },
-    { label:'Vendas',              n:nV },
+    { label:'Leads',        n:nL },
+    { label:'Oportunidade', n:nO },
+    { label:'Vendas',       n:nV },
   ];
-  const rates = [null, nL?nM/nL:null, nM?nR/nM:null, nR?nV/nR:null];
+  const rates = [null, nL?nO/nL:null, nO?nV/nO:null];
   if (hasTomb) { steps.push({ label:'Tombados', n:nT }); rates.push(nV?nT/nV:null); }
 
   const vis = document.getElementById('funil-visual');
@@ -1994,12 +2025,11 @@ function renderFunilGeral() {
   const summary = document.createElement('div');
   summary.className = 'funnel-summary';
   const kpis = [
-    { val:fmtPct(nL?nV/nL:null),  label:'Conversão Geral<br>Leads → Vendas',  color:FUNNEL_CLR[3] },
-    { val:fmtPct(nL?nR/nL:null),  label:'% Realizadas<br>Leads → Realizadas', color:FUNNEL_CLR[2] },
-    { val:fmtPct(rates[1]),        label:'Leads → Marcadas',                   color:FUNNEL_CLR[1] },
-    { val:fmtPct(nR?nV/nR:null),   label:'Realizadas → Vendas',                color:FUNNEL_CLR[3] },
+    { val:fmtPct(nL?nV/nL:null),  label:'Conversão Geral<br>Leads → Vendas',       color:FUNNEL_CLR[2] },
+    { val:fmtPct(rates[1]),       label:'Leads → Oportunidade',                    color:FUNNEL_CLR[1] },
+    { val:fmtPct(nO?nV/nO:null),  label:'Oportunidade → Vendas',                   color:FUNNEL_CLR[2] },
   ];
-  if (hasTomb) kpis.push({ val:fmtPct(nV?nT/nV:null), label:'Vendas → Tombados', color:FUNNEL_CLR[4] });
+  if (hasTomb) kpis.push({ val:fmtPct(nV?nT/nV:null), label:'Vendas → Tombados', color:FUNNEL_CLR[3] });
   summary.innerHTML = kpis.map(k => `
     <div class="funnel-kpi">
       <div class="funnel-kpi-val" style="color:${k.color}">${k.val}</div>
@@ -2034,10 +2064,9 @@ function renderFunilComparativo() {
 
   // Reaproveita exatamente os mesmos conjuntos filtrados da Visão Geral —
   // garante que a soma dos períodos bata com o funil geral do mesmo intervalo.
-  const leads      = filteredLeads();
-  const reunioes   = filteredReuniones();
-  const realizadas = reunioes.filter(isRealizada);
-  const vendas     = filteredVendas(false);
+  const leads    = filteredLeads();
+  const reunBase = reunioesComFiltrosGlobais();
+  const vendas   = filteredVendas(false);
 
   const dLead  = r => parseDate(r.data_criacao);
   const dVenda = r => parseDate(r.data_criacao) || parseDate(r.data_venda, VENDA_DATE_FMT);
@@ -2047,10 +2076,24 @@ function renderFunilComparativo() {
     rows.forEach(r => { const d = getDate(r); if (!d) return; const k = funilPeriodKey(d, mode); m[k] = (m[k]||0) + 1; });
     return m;
   };
-  const bL = bucket(leads, dLead), bM = bucket(reunioes, dLead),
-        bR = bucket(realizadas, dLead), bV = bucket(vendas, dVenda);
+  // Fix 2026-10-01 (sql/040): Oportunidade conta por período via distinct
+  // oportunidade_id, não linha de reunião (mesma correção de inflação do
+  // renderFunilGeral) -- ver oportunidadesComReuniao().
+  const bucketDistinct = (rows, getDate, idField) => {
+    const sets = {};
+    rows.forEach(r => {
+      const d = getDate(r); if (!d) return;
+      const k = funilPeriodKey(d, mode);
+      const id = r[idField]; if (!id) return;
+      (sets[k] ||= new Set()).add(id);
+    });
+    return Object.fromEntries(Object.entries(sets).map(([k,s]) => [k, s.size]));
+  };
+  const bL = bucket(leads, dLead),
+        bO = bucketDistinct(reunBase, dLead, 'oportunidade_id'),
+        bV = bucket(vendas, dVenda);
 
-  const keys = [...new Set([...Object.keys(bL),...Object.keys(bM),...Object.keys(bR),...Object.keys(bV)])].sort();
+  const keys = [...new Set([...Object.keys(bL),...Object.keys(bO),...Object.keys(bV)])].sort();
 
   const rangeTxt = (F.di || F.df)
     ? `${F.di ? F.di.toLocaleDateString('pt-BR') : 'início'} a ${F.df ? F.df.toLocaleDateString('pt-BR') : 'hoje'}`
@@ -2064,17 +2107,16 @@ function renderFunilComparativo() {
   }
 
   const STAGES = [
-    { key:'L', label:'Leads',      clr:FUNNEL_CLR[0] },
-    { key:'M', label:'Marcadas',   clr:FUNNEL_CLR[1] },
-    { key:'R', label:'Realizadas', clr:FUNNEL_CLR[2] },
-    { key:'V', label:'Vendas',     clr:FUNNEL_CLR[3] },
+    { key:'L', label:'Leads',        clr:FUNNEL_CLR[0] },
+    { key:'O', label:'Oportunidade', clr:FUNNEL_CLR[1] },
+    { key:'V', label:'Vendas',       clr:FUNNEL_CLR[2] },
   ];
   const BAR_MAX = 164, BAR_MIN = 46;
 
   const periods = keys.map(k => {
-    const L = bL[k]||0, M = bM[k]||0, R = bR[k]||0, V = bV[k]||0;
-    return { key:k, label:funilPeriodLabel(k, mode), vals:{L,M,R,V},
-             stepLM:L?M/L:null, stepMR:M?R/M:null, stepRV:R?V/R:null, conv:L?V/L:null };
+    const L = bL[k]||0, O = bO[k]||0, V = bV[k]||0;
+    return { key:k, label:funilPeriodLabel(k, mode), vals:{L,O,V},
+             stepLO:L?O/L:null, stepOV:O?V/O:null, conv:L?V/L:null };
   });
 
   const arrowCls = (cur, prev) => {
@@ -2094,7 +2136,7 @@ function renderFunilComparativo() {
     return `<div class="fcomp-trend flat">= estável</div>`;
   };
 
-  const STEP_KEYS = { 1:'stepLM', 2:'stepMR', 3:'stepRV' };
+  const STEP_KEYS = { 1:'stepLO', 2:'stepOV' };
 
   const cols = periods.map((p, i) => {
     const prev = i > 0 ? periods[i-1] : null;
@@ -3116,24 +3158,37 @@ function pivotValue(dim, row, isVenda) {
   return v || '(Vazio)';
 }
 
-// Constrói a árvore: cada nó acumula contagem das 4 etapas (L,M,R,V).
+// Constrói a árvore: cada nó acumula contagem de 3 etapas (L,V = int; O = Set
+// de oportunidade_id, pra contar Oportunidade DISTINTA por combinação de
+// dimensões, não linha de reunião -- fix 2026-10-01, sql/040, mesma correção
+// de inflação do renderFunilGeral/renderFunilComparativo).
 function buildPivotTree(dims) {
-  const root = { L:0,M:0,R:0,V:0, children:new Map() };
-  const add = (row, stage, isVenda) => {
+  const root = { L:0, O:new Set(), V:0, children:new Map() };
+  const addCount = (row, stage, isVenda) => {
     root[stage]++;
     let node = root;
     for (const dim of dims) {
       const val = pivotValue(dim, row, isVenda);
-      if (!node.children.has(val)) node.children.set(val, { L:0,M:0,R:0,V:0, children:new Map() });
+      if (!node.children.has(val)) node.children.set(val, { L:0, O:new Set(), V:0, children:new Map() });
       node = node.children.get(val);
       node[stage]++;
     }
   };
-  filteredLeads().forEach(r => add(r, 'L', false));
-  const marc = filteredReuniones();
-  marc.forEach(r => add(r, 'M', false));
-  marc.filter(isRealizada).forEach(r => add(r, 'R', false));
-  filteredVendas(false).forEach(r => add(r, 'V', true));
+  const addOportunidade = (row) => {
+    const id = row.oportunidade_id;
+    if (!id) return; // sem Opportunity vinculada -- não entra na contagem distinta
+    root.O.add(id);
+    let node = root;
+    for (const dim of dims) {
+      const val = pivotValue(dim, row, false);
+      if (!node.children.has(val)) node.children.set(val, { L:0, O:new Set(), V:0, children:new Map() });
+      node = node.children.get(val);
+      node.O.add(id);
+    }
+  };
+  filteredLeads().forEach(r => addCount(r, 'L', false));
+  reunioesComFiltrosGlobais().forEach(addOportunidade);
+  filteredVendas(false).forEach(r => addCount(r, 'V', true));
   return root;
 }
 
@@ -3146,9 +3201,8 @@ const PIVOT_DIM_SEL_KEY = {
 };
 // Extratores de valor por coluna, para ordenação por clique no cabeçalho (rate ausente = -1 → vai pro fim no desc)
 const PIVOT_SORT_VAL = {
-  L: n => n.L,           lm: n => n.L ? n.M/n.L : -1,
-  M: n => n.M,           mr: n => n.M ? n.R/n.M : -1,
-  R: n => n.R,           rv: n => n.R ? n.V/n.R : -1,
+  L: n => n.L,           lo: n => n.L ? n.O.size/n.L : -1,
+  O: n => n.O.size,      ov: n => n.O.size ? n.V/n.O.size : -1,
   V: n => n.V,           conv: n => n.L ? n.V/n.L : -1,
 };
 
@@ -3174,25 +3228,24 @@ function pivotRowHtml(n, depth, label, hasChildren, expanded, pid) {
   const toggle = hasChildren
     ? `<span class="pv-toggle" data-pid="${pid}">${expanded ? '▾' : '▸'}</span>`
     : `<span class="pv-toggle-empty"></span>`;
+  const nO = n.O.size;
   return `<tr class="pv-row">
     <td class="pv-dim" style="padding-left:${12+indent}px">${toggle}<span class="pv-lbl">${esc(label)}</span></td>
     <td class="num">${fmtN(n.L)}</td>
-    <td class="num pv-rate">${pvPct(n.M,n.L)}</td>
-    <td class="num">${fmtN(n.M)}</td>
-    <td class="num pv-rate">${pvPct(n.R,n.M)}</td>
-    <td class="num">${fmtN(n.R)}</td>
-    <td class="num pv-rate">${pvPct(n.V,n.R)}</td>
+    <td class="num pv-rate">${pvPct(nO,n.L)}</td>
+    <td class="num">${fmtN(nO)}</td>
+    <td class="num pv-rate">${pvPct(n.V,nO)}</td>
     <td class="num">${fmtN(n.V)}</td>
     <td class="num pv-conv">${pvPct(n.V,n.L)}</td>
   </tr>`;
 }
 
 function pivotTotalRowHtml(n) {
+  const nO = n.O.size;
   return `<tr class="pv-total">
     <td>TOTAL</td>
-    <td class="num">${fmtN(n.L)}</td><td class="num pv-rate">${pvPct(n.M,n.L)}</td>
-    <td class="num">${fmtN(n.M)}</td><td class="num pv-rate">${pvPct(n.R,n.M)}</td>
-    <td class="num">${fmtN(n.R)}</td><td class="num pv-rate">${pvPct(n.V,n.R)}</td>
+    <td class="num">${fmtN(n.L)}</td><td class="num pv-rate">${pvPct(nO,n.L)}</td>
+    <td class="num">${fmtN(nO)}</td><td class="num pv-rate">${pvPct(n.V,nO)}</td>
     <td class="num">${fmtN(n.V)}</td><td class="num pv-conv">${pvPct(n.V,n.L)}</td>
   </tr>`;
 }
@@ -3249,7 +3302,7 @@ function renderPivotGran() {
 function renderPivotArea() {
   const root = STATE.pivotTree;
   if (!root) return;
-  const cols = [['L','Leads'],['lm','L→M'],['M','Marcadas'],['mr','M→R'],['R','Realizadas'],['rv','R→V'],['V','Vendas'],['conv','Conv. L→V']];
+  const cols = [['L','Leads'],['lo','L→O'],['O','Oportunidade'],['ov','O→V'],['V','Vendas'],['conv','Conv. L→V']];
   const th = cols.map(([c,lbl]) => {
     const active = STATE.pivotSort.col === c;
     const arrow = active ? (STATE.pivotSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
@@ -3280,6 +3333,22 @@ function togglePivotDim(dim) {
   renderPivot();
 }
 
+// Fix 2026-10-01 (sql/040): dedupe por Oportunidade distinta (não por
+// negócio/e-mail) -- usado pela perspectiva "Oportunidades" da aba Reuniões.
+// Reuniões sem oportunidade_id (pai=Lead/Account, ou residual sem vínculo
+// nenhum) são descartadas: não representam uma Oportunidade recuperável.
+// Mesmo critério de empate do dedupReunioes: prefere manter uma REALIZADA.
+function dedupPorOportunidade(rows) {
+  const byId = new Map();
+  rows.forEach(r => {
+    const id = r.oportunidade_id;
+    if (!id) return;
+    const cur = byId.get(id);
+    if (!cur || (!isRealizada(cur) && isRealizada(r))) byId.set(id, r);
+  });
+  return [...byId.values()];
+}
+
 // ================================================================
 // RENDER: REUNIÕES (volume por data de atividade, empilhado por parâmetro)
 // ================================================================
@@ -3287,16 +3356,23 @@ function renderReunioes() {
   destroyChart('reunioes');
   const mode  = STATE.reunioesTimeMode;
   const field = STATE.reunioesBreakdown;
+  const persp = STATE.reunioesPerspectiva;
   const per   = mode === 'mes' ? 'Mensal' : mode === 'semana' ? 'Semanal' : 'Diário';
   const lblMap = { tipo_reuniao:'Tipo de Reunião', deal_utm_source:'Source', funil:'Funil', estrategia:'Estratégia', fonte_original_pipe:'Fonte Orig.', closer_responsavel:'Closer', sdr_responsavel:'SDR' };
-  document.getElementById('reunioes-chart-title').textContent = `Reuniões — ${per} · por ${lblMap[field] || field}`;
+  const perspLbl = persp === 'oportunidades' ? 'Oportunidades com reunião' : 'Service Appointments';
+  document.getElementById('reunioes-chart-title').textContent = `${perspLbl} — ${per} · por ${lblMap[field] || field}`;
+  const sub = document.getElementById('reunioes-chart-sub');
+  if (sub) sub.textContent = persp === 'oportunidades'
+    ? 'Oportunidades Salesforce distintas com reunião agendada · mede aquisição'
+    : 'Toda reunião agendada (Service Appointment), sem deduplicar por Oportunidade · mede capacidade da equipe';
 
-  // Reuniões filtradas (filtros globais + tipo/closer/sdr defensivos) — SEM dedup: volume real de atividades.
+  // Reuniões filtradas (filtros globais + tipo/closer/sdr defensivos).
   let reunTodas = RAW.reunioes.filter(r => passGlobal(r) && passSdrCloser(r, SDR_IN_REUNIOES, CLOSER_IN_REUNIOES, TIPO_IN_REUNIOES));
   // Filtro específico da aba: data da atividade (data_da_atividade)
   if (F.rai || F.raf) reunTodas = reunTodas.filter(r => { const d = parseDate(r.data_da_atividade); return d && (!F.rai || d >= F.rai) && (!F.raf || d <= F.raf); });
-  // Dedup conforme o modo escolhido no dashboard (negócio / contato / email+tipo)
-  const reun = dedupReunioes(reunTodas);
+  // Dedup conforme a perspectiva: Oportunidade distinta, ou modo de contagem de
+  // Service Appointment escolhido no dashboard (negócio / contato / email+tipo).
+  const reun = persp === 'oportunidades' ? dedupPorOportunidade(reunTodas) : dedupReunioes(reunTodas);
   if (!reun.length) return;
   const parsed = reun.map(r => ({ d: parseDate(r.data_da_atividade), row: r })).filter(x => x.d);
   if (!parsed.length) return;
@@ -3583,7 +3659,10 @@ ${dailyByField(leads,'data_criacao',DATE_FMT,'funil')}`;
 
   // --- REUNIÕES ---
   const realizadas = reun.filter(isRealizada);
-  const reunCtx = !reun.length ? 'REUNIOES: sem dados' : `REUNIOES (total: ${reun.length} | realizadas: ${realizadas.length})
+  // Fix 2026-10-01 (sql/040): Oportunidades distintas, não linha de reunião --
+  // métrica que o novo Funil usa (ver oportunidadesComReuniao() no painel).
+  const nOportunidades = oportunidadesComReuniao(reun);
+  const reunCtx = !reun.length ? 'REUNIOES: sem dados' : `REUNIOES (total: ${reun.length} | realizadas: ${realizadas.length} | Oportunidades distintas com reunião: ${nOportunidades})
 
 REUNIÕES POR MÊS × FUNIL:
 ${monthlyXTab(reun,'data_reuniao',DATE_FMT,'funil')}`;
@@ -3785,12 +3864,26 @@ function bindEvents() {
     });
   });
 
-  // Modo de contagem de reuniões (Negócio / Contato / Email+Tipo) — global
+  // Modo de contagem de Service Appointments (Negócio / Contato / Email+Tipo) --
+  // Fix 2026-10-01: movido da barra global pra dentro da aba Reuniões (só afeta
+  // a perspectiva 'service_appointments' -- a perspectiva 'oportunidades' conta
+  // por oportunidade_id, não precisa desse modo).
   document.getElementById('reuniao-count-toggle').addEventListener('click', e => {
     const btn = e.target.closest('.toggle-btn');
     if (!btn) return;
     STATE.reuniaoCountMode = btn.dataset.countmode;
     document.querySelectorAll('#reuniao-count-toggle .toggle-btn').forEach(b => b.classList.toggle('active', b===btn));
+    render();
+  });
+
+  // Perspectiva da aba Reuniões: Oportunidades (distinct oportunidade_id) vs.
+  // Service Appointments (toda reunião agendada, modo de contagem acima).
+  document.getElementById('reunioes-perspectiva-toggle').addEventListener('click', e => {
+    const btn = e.target.closest('.toggle-btn');
+    if (!btn) return;
+    STATE.reunioesPerspectiva = btn.dataset.rperspectiva;
+    document.querySelectorAll('#reunioes-perspectiva-toggle .toggle-btn').forEach(b => b.classList.toggle('active', b===btn));
+    document.getElementById('reuniao-count-wrap').style.display = STATE.reunioesPerspectiva === 'service_appointments' ? '' : 'none';
     render();
   });
 

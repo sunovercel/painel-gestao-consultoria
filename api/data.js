@@ -86,6 +86,15 @@
 //    User_Home__dll.Name__c, esse último corrigido em sql/036 em 2026-09-17
 //    -- CloserIraAtuar_c__c, usado antes, era booleano Sim/Não, nunca teve
 //    nome de pessoa. ServiceAppointment em si só tem OwnerId, sem nome).
+//  - Fix 2026-10-01 (sql/040, pedido do Rafael/Lucas, reunião Fathom 24/09
+//    "Revisão do indicador de agendamentos"): o funil principal do painel
+//    contava linha de reunião (ServiceAppointment), não Oportunidade
+//    distinta -- uma Oportunidade com 3 reuniões (inicial/follow-up/
+//    reagendamento) inflava a conversão em 3x. VW_REUNIOES_SALESFORCE
+//    passa a expor OPORTUNIDADE_ID (ParentRecordId quando
+//    ParentRecordType='Opportunity', NULL quando o pai é Lead/Account) --
+//    o painel usa isso pra contar Oportunidades ÚNICAS com reunião em vez
+//    de linhas. Ver index.html (oportunidadesComReuniao()) e sql/README.md.
 //  - "prioridade" não existe em nenhum objeto do Salesforce -- Forecast
 //    roda sem segmentação por prioridade (tudo cai em "(Sem prioridade)").
 
@@ -220,6 +229,7 @@ function mapLead(r) {
 function mapReuniaoSalesforce(r) {
   return {
     negocio_id: r.NEGOCIO_ID,
+    oportunidade_id: str(r.OPORTUNIDADE_ID), // sql/040 -- Id da Opportunity quando a reunião tem pai=Opportunity, '' quando pai=Lead/Account (não dá pra contar Oportunidade distinta nesse caso)
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
@@ -256,6 +266,7 @@ function normalizeCloserHistorico(v) {
 function mapReuniaoHistorica(r) {
   return {
     negocio_id: r.NEGOCIO_ID,
+    oportunidade_id: '', // não existe em FATO_REUNIAO_HIST_PLANILHA (sql/006) -- carga histórica anterior ao Salesforce, sem vínculo nativo de Opportunity
     email: str(r.EMAIL),
     funil: str(r.FUNIL),
     estrategia: str(r.ESTRATEGIA),
@@ -383,7 +394,7 @@ async function loadFromSnowflake() {
   // Dados Snow.
   const reuniaoSFRows = await query(`
     SELECT
-      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, COMPLEMENTO_ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
+      NEGOCIO_ID, OPORTUNIDADE_ID, EMAIL, FUNIL, ESTRATEGIA, COMPLEMENTO_ESTRATEGIA, UTM_SOURCE, FONTE_AQUISICAO, CANAL, STATUS_REUNIAO, TIPO_REUNIAO,
       SDR_RESPONSAVEL, CLOSER_RESPONSAVEL,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
       TO_VARCHAR(DATA_ATIVIDADE, 'YYYY-MM-DD"T"HH24:MI:SS') AS DATA_ATIVIDADE
