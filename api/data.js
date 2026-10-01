@@ -103,6 +103,7 @@
 //    roda sem segmentação por prioridade (tudo cai em "(Sem prioridade)").
 
 import snowflake from 'snowflake-sdk';
+import { requireSession } from './_auth.js';
 
 // Fix conhecido: em serverless (Vercel/Lambda), o filesystem é só-leitura
 // exceto /tmp. O snowflake-sdk tenta escrever cache de OCSP/credenciais em
@@ -457,13 +458,13 @@ async function loadFromSnowflake() {
 }
 
 export default async function handler(req, res) {
-  // Versão de homologação: acesso restrito por senha única (SITE_PASSWORD
-  // na Vercel). Protege o endpoint em si, não só a tela do painel -- sem
-  // isso, quem descobrisse a URL do endpoint pulava a tela de login.
-  const sitePassword = process.env.SITE_PASSWORD;
-  if (sitePassword && req.headers['x-site-password'] !== sitePassword) {
-    return res.status(401).json({ error: 'Senha inválida ou ausente.' });
-  }
+  // Fix 2026-10-01: senha única (SITE_PASSWORD) substituída por Google SSO
+  // corporativo, pra poder embutir o painel no Suno DataHub (iframe
+  // cross-site) -- cada pessoa loga com a própria conta @suno.com.br /
+  // @sunoresearch.com.br em vez de uma senha compartilhada. Gate incondicional
+  // (o esquema antigo pulava a checagem inteira se SITE_PASSWORD não estivesse
+  // setada -- fail-open; este aqui é fail-closed). Ver api/_auth.js.
+  if (requireSession(req, res)) return;
 
   try {
     const now = Date.now();
