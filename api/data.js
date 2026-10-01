@@ -437,20 +437,23 @@ async function loadFromSnowflake() {
     meta_de_pl_medio: str(m.META_PL_MEDIO),
   }));
 
-  // Fix 2026-09-10 (sql/021, item 10 da devolutiva do Allan): TAXA_ADM
-  // (TaxaADM_c__c, texto livre) achata/zera boa parte da variedade real de
-  // taxas (só 3 valores distintos chegavam ao painel). TAXA_FECHADA
-  // (TaxaFechada_c__c, picklist) é mais limpa e vira a fonte primária no
-  // painel (tombTaxa() no index.html) -- TAXA_ADM continua como fallback,
-  // sem alteração. Cobertura combinada ainda deixa a maioria dos
-  // tombamentos sem taxa (~73%) -- pendência de cadastro no Salesforce, não
-  // de código.
+  // Fix 2026-10-01 (pedido do Pedro Enzzo/Paulo, Slack): fonte de Tombamento
+  // trocada de FATO_TOMBAMENTO para SERVING_LAYER.CONSULTORIA.
+  // VW_FUNIL_CONSULTORIA_SALESFORCE_HUBSPOT -- grão é 1 linha por negócio
+  // cobrindo o funil inteiro (Salesforce+HubSpot), não só tombamento; TOMBOU
+  // ('SIM'/'NÃO') marca quem de fato tombou. CADASTRO_PL_TOTAL_IMPLANTADO é a
+  // fonte de PL indicada (existe também _API, uma segunda fonte, não usada
+  // aqui). TAXA_ADM não existe nessa view -- fica vazio, front-end já cai no
+  // fallback de TAXA_FECHADA (tombTaxa() no index.html).
   const tombRows = await query(`
     SELECT
-      NOME, EMAIL, TAXA_ADM, TAXA_FECHADA,
-      TO_VARCHAR(DATA_IMPLANTACAO, 'YYYY-MM-DD') AS DATA_IMPLANTACAO,
-      PL_IMPLANTACAO
-    FROM FATO_TOMBAMENTO
+      DEALNAME_CONSULTORIA AS NOME,
+      EMAIL_CONSULTORIA AS EMAIL,
+      TAXA_FECHADA_CONSULTORIA AS TAXA_FECHADA,
+      TO_VARCHAR(CADASTRO_DATA_IMPLANTACAO, 'YYYY-MM-DD') AS DATA_IMPLANTACAO,
+      CADASTRO_PL_TOTAL_IMPLANTADO AS PL_IMPLANTACAO
+    FROM SERVING_LAYER.CONSULTORIA.VW_FUNIL_CONSULTORIA_SALESFORCE_HUBSPOT
+    WHERE TOMBOU = 'SIM'
   `);
   const tombamentos = tombRows.map(mapTombamento);
 
