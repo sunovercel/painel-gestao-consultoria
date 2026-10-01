@@ -746,26 +746,26 @@ tr:hover td{background:#FAFAFA}
     <div class="card">
       <div class="card-head">
         <div>
-          <div class="card-title">Fatores de Conversão por Prioridade (editáveis)</div>
+          <div class="card-title">Fatores de Conversão por Temperatura (editáveis)</div>
           <div class="card-sub">Ajuste as taxas para estressar cenários — as projeções recalculam na hora.</div>
         </div>
       </div>
       <div class="forecast-factors">
-        <label class="ff-item"><span class="ff-lbl">Prioridade Alta</span><span class="ff-input"><input type="number" id="f-fac-alta" min="0" max="100" step="1" value="60"><span>%</span></span></label>
-        <label class="ff-item"><span class="ff-lbl">Prioridade Média</span><span class="ff-input"><input type="number" id="f-fac-media" min="0" max="100" step="1" value="25"><span>%</span></span></label>
-        <label class="ff-item"><span class="ff-lbl">Prioridade Baixa</span><span class="ff-input"><input type="number" id="f-fac-baixa" min="0" max="100" step="1" value="5"><span>%</span></span></label>
+        <label class="ff-item"><span class="ff-lbl">Quente</span><span class="ff-input"><input type="number" id="f-fac-quente" min="0" max="100" step="1" value="60"><span>%</span></span></label>
+        <label class="ff-item"><span class="ff-lbl">Morno</span><span class="ff-input"><input type="number" id="f-fac-morno" min="0" max="100" step="1" value="25"><span>%</span></span></label>
+        <label class="ff-item"><span class="ff-lbl">Frio</span><span class="ff-input"><input type="number" id="f-fac-frio" min="0" max="100" step="1" value="5"><span>%</span></span></label>
       </div>
     </div>
 
     <div class="metrics-row" id="forecast-summary"></div>
 
     <div class="card">
-      <div class="card-head"><div><div class="card-title">Projeção por Quantidade de Clientes</div><div class="card-sub">Clientes na base × taxa de conversão da prioridade</div></div></div>
+      <div class="card-head"><div><div class="card-title">Projeção por Quantidade de Clientes</div><div class="card-sub">Clientes na base × taxa de conversão da temperatura</div></div></div>
       <div class="tbl-wrap" id="forecast-tbl-qtd"></div>
     </div>
 
     <div class="card">
-      <div class="card-head"><div><div class="card-title">Projeção por Patrimônio Validado</div><div class="card-sub">Soma do patrimônio validado em cada prioridade × taxa de conversão</div></div></div>
+      <div class="card-head"><div><div class="card-title">Projeção por Patrimônio Validado</div><div class="card-sub">Soma do patrimônio validado em cada temperatura × taxa de conversão</div></div></div>
       <div class="tbl-wrap" id="forecast-tbl-pat"></div>
     </div>
   </section>
@@ -894,7 +894,7 @@ const STATE = {
   reunioesTimeMode:  'mes',          // 'dia' | 'semana' | 'mes'
   reunioesPerspectiva: 'oportunidades', // 'oportunidades' | 'service_appointments' -- só a aba Reuniões (sql/040)
   reuniaoCountMode:  'negocio',      // 'negocio' | 'email' | 'emailtipo' — como contar Service Appointments (só perspectiva 'service_appointments' da aba Reuniões)
-  forecastFactors: { alta:60, media:25, baixa:5 }, // taxas de conversão (%) editáveis do Forecast
+  forecastFactors: { quente:60, morno:25, frio:5 }, // taxas de conversão (%) editáveis do Forecast -- Fix 2026-10-01 (sql/045, pedido do Rafael): troca Alta/Média/Baixa (nunca existiu no Salesforce) por Quente/Morno/Frio (Temperatura_c__c, dado real)
   forecastEtapa:   new Set(),        // filtro específico do Forecast: Etapa do negócio
   pivotDims:      [],           // ordem dos parâmetros nas linhas (hierarquia)
   pivotDateGran:  'mes',        // 'mes' | 'semana' | 'dia' — granularidade quando Data é parâmetro
@@ -3401,16 +3401,20 @@ function renderReunioes() {
 // ================================================================
 // RENDER: FORECAST (projeção a partir da base Negociação)
 // ================================================================
-const FORECAST_PRIOS = [
-  { key:'alta',  label:'Prioridade Alta' },
-  { key:'media', label:'Prioridade Média' },
-  { key:'baixa', label:'Prioridade Baixa' },
+// Fix 2026-10-01 (sql/045, pedido do Rafael): Forecast classifica por
+// Temperatura (Quente/Morno/Frio, Opportunity.Temperatura_c__c -- dado real)
+// em vez de Prioridade (Alta/Média/Baixa, campo que nunca existiu no
+// Salesforce, sempre veio vazio).
+const FORECAST_TEMPS = [
+  { key:'quente', label:'Quente' },
+  { key:'morno',  label:'Morno' },
+  { key:'frio',   label:'Frio' },
 ];
-function prioKey(row) {
-  const v = normVal(row.prioridade);
-  if (v === 'alta')  return 'alta';
-  if (v === 'media') return 'media';
-  if (v === 'baixa') return 'baixa';
+function tempKey(row) {
+  const v = normVal(row.temperatura);
+  if (v === 'quente') return 'quente';
+  if (v === 'morno')  return 'morno';
+  if (v === 'frio')   return 'frio';
   return 'outras';
 }
 
@@ -3433,15 +3437,15 @@ function computeAndRenderForecast() {
   const facOf = k => k === 'outras' ? 0 : (Number(fac[k]) || 0) / 100;
   const fmtN1 = n => (n||0).toLocaleString('pt-BR', { minimumFractionDigits:1, maximumFractionDigits:1 });
 
-  const g = { alta:{n:0,pat:0}, media:{n:0,pat:0}, baixa:{n:0,pat:0}, outras:{n:0,pat:0} };
+  const g = { quente:{n:0,pat:0}, morno:{n:0,pat:0}, frio:{n:0,pat:0}, outras:{n:0,pat:0} };
   rows.forEach(r => {
-    const k = prioKey(r);
+    const k = tempKey(r);
     g[k].n += 1;
     g[k].pat += parsePatrimonio(r.adv_patrimonio_validado || r.patrimonio_validado);
   });
 
-  const linhas = [...FORECAST_PRIOS];
-  if (g.outras.n > 0) linhas.push({ key:'outras', label:'(Sem prioridade)' });
+  const linhas = [...FORECAST_TEMPS];
+  if (g.outras.n > 0) linhas.push({ key:'outras', label:'(Sem temperatura)' });
 
   let totN=0, totPat=0, projN=0, projPat=0;
   linhas.forEach(({key}) => { totN += g[key].n; totPat += g[key].pat; projN += g[key].n*facOf(key); projPat += g[key].pat*facOf(key); });
@@ -3454,7 +3458,7 @@ function computeAndRenderForecast() {
   ].map(c => `<div class="metric-card"><div class="metric-label">${c.label}</div><div class="metric-value" style="font-size:22px">${c.v}</div><div class="metric-sub">${c.sub}</div></div>`).join('');
 
   document.getElementById('forecast-tbl-qtd').innerHTML = `<table>
-    <thead><tr><th>Prioridade</th><th class="num">Nº Clientes</th><th class="num">Taxa Conversão</th><th class="num">Projeção (clientes)</th></tr></thead>
+    <thead><tr><th>Temperatura</th><th class="num">Nº Clientes</th><th class="num">Taxa Conversão</th><th class="num">Projeção (clientes)</th></tr></thead>
     <tbody>
       ${linhas.map(({key,label}) => `<tr>
         <td>${esc(label)}</td>
@@ -3466,7 +3470,7 @@ function computeAndRenderForecast() {
     </tbody></table>`;
 
   document.getElementById('forecast-tbl-pat').innerHTML = `<table>
-    <thead><tr><th>Prioridade</th><th class="num">Patrimônio Validado</th><th class="num">Taxa Conversão</th><th class="num">Projeção (R$)</th></tr></thead>
+    <thead><tr><th>Temperatura</th><th class="num">Patrimônio Validado</th><th class="num">Taxa Conversão</th><th class="num">Projeção (R$)</th></tr></thead>
     <tbody>
       ${linhas.map(({key,label}) => `<tr>
         <td>${esc(label)}</td>
@@ -4027,7 +4031,7 @@ function bindEvents() {
   });
 
   // Forecast: fatores de conversão editáveis (recalcula tabelas na hora, sem mexer nos inputs)
-  [['f-fac-alta','alta'],['f-fac-media','media'],['f-fac-baixa','baixa']].forEach(([id,key]) => {
+  [['f-fac-quente','quente'],['f-fac-morno','morno'],['f-fac-frio','frio']].forEach(([id,key]) => {
     const inp = document.getElementById(id);
     if (inp) inp.addEventListener('input', e => {
       STATE.forecastFactors[key] = e.target.value === '' ? 0 : Number(e.target.value);

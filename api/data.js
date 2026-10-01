@@ -6,13 +6,17 @@
 // canônicas que normalizeRow()/COL_ALIASES usavam, então o resto do
 // painel (filtros, funil, cohort, forecast, pivot) não precisa mudar.
 //
-// Negociação (pipeline aberto) vem de VW_FATO_NEGOCIO_COMBINADO (2026-09-02),
-// não de FATO_NEGOCIO puro -- Consultoria só passou a existir de fato no
-// Salesforce a partir de 2026-07-14 (antes disso o pouco que aparecia em
-// FATO_NEGOCIO era ruído). A view combina Salesforce (>= corte) com
-// FATO_NEGOCIO_HIST_HUBSPOT (< corte, carga única a partir de
-// RAW.CONSULTORIA_HUBSPOT.FUNIL_ADVISORY). Ver sql/007_load_negocio_historico_hubspot.sql
-// e sql/README.md no repo Projeto Dados Snow.
+// Negociação (pipeline aberto) vem de VW_NEGOCIACAO_SALESFORCE (2026-10-01,
+// sql/045), que lê direto o objeto Opportunity do Salesforce -- mesmo padrão
+// de VW_VENDAS_SALESFORCE, nas 3 etapas abertas pedidas pelo Rafael (Em
+// negociação, Proposta Aceita, Contrato Enviado). Antes vinha de
+// VW_FATO_NEGOCIO_COMBINADO -> FATO_NEGOCIO, cuja carga do lado Salesforce
+// estava SUSPENSA desde 2026-09-04 -- dado parado quase um mês, nunca
+// resolvido. Trocar a fonte corrigiu isso e permitiu adicionar TEMPERATURA
+// (Temperatura_c__c, sql/045), que substitui a antiga classificação Alta/
+// Média/Baixa (campo que nunca existiu no Salesforce) no Forecast. Ver
+// index.html (FORECAST_TEMPS/tempKey) e sql/README.md no repo Projeto Dados
+// Snow.
 //
 // Vendas vêm de VW_VENDAS_SALESFORCE (2026-09-09), que lê direto o objeto
 // Opportunity do Salesforce Data Cloud com a lógica que o Rafael (área de
@@ -196,7 +200,8 @@ function mapNegocio(r) {
     sdr_responsavel: str(r.SDR_RESPONSAVEL),
     closer_responsavel: str(r.CLOSER_RESPONSAVEL),
     etapa_do_negocio: normalizeEtapa(str(r.STAGE_NAME)),
-    prioridade: '', // não existe no Salesforce -- confirmado em 2026-09-01
+    prioridade: '', // "Prioridade" (Alta/Média/Baixa) não existe no Salesforce -- confirmado em 2026-09-01. Substituída por "temperatura" (Quente/Morno/Frio) no Forecast, sql/045
+    temperatura: str(r.TEMPERATURA), // Opportunity.Temperatura_c__c -- só populado em Negociação (VW_NEGOCIACAO_SALESFORCE, sql/045); vazio em Vendas/Leads
     tipo_reuniao: str(r.TIPO_REUNIAO), // só populado em vendas (VW_VENDAS_SALESFORCE, sql/020) -- vem do vínculo nativo ServiceAppointment.ParentRecordId, não mais cruzamento por e-mail
   };
 }
@@ -295,16 +300,25 @@ function mapTombamento(r) {
 }
 
 async function loadFromSnowflake() {
-  const negocioRows = await query(`
+  // "Negociação" vem de VW_NEGOCIACAO_SALESFORCE (2026-10-01, sql/045), que lê
+  // direto o objeto Opportunity do Salesforce -- mesmo padrão de
+  // VW_VENDAS_SALESFORCE, nas 3 etapas abertas pedidas pelo Rafael (Em
+  // negociação, Proposta Aceita, Contrato Enviado). Antes vinha de
+  // VW_FATO_NEGOCIO_COMBINADO -> FATO_NEGOCIO, cuja carga Salesforce estava
+  // suspensa desde 2026-09-04 (dado parado quase um mês). Troca resolveu
+  // isso e trouxe TEMPERATURA (Temperatura_c__c), que substitui a antiga
+  // "Prioridade" (nunca existiu no Salesforce) no Forecast.
+  const negociacaoRows = await query(`
     SELECT
-      NEGOCIO_ID, EMAIL, ETAPA_FUNIL, FUNIL, ESTRATEGIA, STAGE_NAME,
+      NEGOCIO_ID, EMAIL, FUNIL, ESTRATEGIA, COMPLEMENTO_ESTRATEGIA, STAGE_NAME, TEMPERATURA,
       FONTE_AQUISICAO, CANAL, UTM_SOURCE, UTM_MEDIUM, UTM_CAMPAIGN,
-      APORTE_MENSAL_FAIXA, PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO, VALOR,
+      PATRIMONIO_DECLARADO, PATRIMONIO_VALIDADO, TIPO_REUNIAO,
+      SDR_RESPONSAVEL, CLOSER_RESPONSAVEL,
       TO_VARCHAR(DATA_CRIACAO, 'YYYY-MM-DD') AS DATA_CRIACAO,
-      TO_VARCHAR(DATA_CONTRATACAO, 'YYYY-MM-DD') AS DATA_CONTRATACAO,
-      SDR_RESPONSAVEL, CLOSER_RESPONSAVEL
-    FROM VW_FATO_NEGOCIO_COMBINADO
+      TO_VARCHAR(DATA_LEAD, 'YYYY-MM-DD') AS DATA_LEAD
+    FROM VW_NEGOCIACAO_SALESFORCE
   `);
+  const negociacao = negociacaoRows.map(mapNegocio);
 
   // "Vendas" vem de VW_VENDAS_SALESFORCE (2026-09-09), que lê direto o objeto
   // Opportunity do Salesforce filtrado pela lógica que o Rafael validou:
@@ -339,8 +353,6 @@ async function loadFromSnowflake() {
     FROM VW_VENDAS_SALESFORCE
   `);
   const vendas = vendaRows.map(mapNegocio);
-
-  const negociacao = negocioRows.filter(r => r.ETAPA_FUNIL === 'Opportunity').map(mapNegocio);
 
   // "Leads" = objeto Lead do Salesforce (Data Cloud), não Opportunity -- bate com o
   // relatório [Marketing] Leads - Consultoria (validado em 2026-09-08: 10022 vs 10290,
