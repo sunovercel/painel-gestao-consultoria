@@ -458,13 +458,15 @@ async function loadFromSnowflake() {
 }
 
 export default async function handler(req, res) {
-  // Fix 2026-10-01: senha única (SITE_PASSWORD) substituída por Google SSO
-  // corporativo, pra poder embutir o painel no Suno DataHub (iframe
-  // cross-site) -- cada pessoa loga com a própria conta @suno.com.br /
-  // @sunoresearch.com.br em vez de uma senha compartilhada. Gate incondicional
-  // (o esquema antigo pulava a checagem inteira se SITE_PASSWORD não estivesse
-  // setada -- fail-open; este aqui é fail-closed). Ver api/_auth.js.
-  if (requireSession(req, res)) return;
+  // Fix 2026-10-01: senha única (SITE_PASSWORD) substituída por sessão
+  // Supabase Auth compartilhada com o Suno DataHub -- mesma linha de
+  // segurança do sr-gestao-gerencial (outro dashboard já embutido lá).
+  // Cada pessoa loga com a própria conta @suno.com.br/@sunoresearch.com.br;
+  // dentro do DataHub a sessão chega via handshake (postMessage), sem
+  // redirect. Gate incondicional (o esquema antigo pulava a checagem
+  // inteira se SITE_PASSWORD não estivesse setada -- fail-open; este aqui
+  // é fail-closed). Ver api/_auth.js.
+  if (await requireSession(req, res)) return;
 
   try {
     const now = Date.now();

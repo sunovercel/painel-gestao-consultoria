@@ -2,7 +2,6 @@
   "name": "painel-gestao-consultoria",
   "private": true,
   "dependencies": {
-    "google-auth-library": "^9.14.0",
     "snowflake-sdk": "^3.2.0"
   }
 }

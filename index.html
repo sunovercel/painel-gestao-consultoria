@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dashboard Estratégico — Suno Consultoria</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -816,24 +817,64 @@ tr:hover td{background:#FAFAFA}
 const DATA_ENDPOINT = '/api/data'; // Snowflake (ANALYTICS.CONSULTORIA) via serverless function -- ver api/data.js
 
 // ================================================================
-// AUTH — Google SSO corporativo (fix 2026-10-01). Substituiu a senha única
-// pra permitir embutir o painel em iframe cross-site no Suno DataHub --
-// cada pessoa loga com a própria conta @suno.com.br/@sunoresearch.com.br.
-// Sessão via cookie HttpOnly (api/_auth.js) -- nunca lida/guardada em JS;
-// loadData() descobre se está autenticado só pela resposta de /api/data
-// (200 = ok, 401 = mostra esta tela). Ver api/auth/{login,callback,logout}.js.
+// AUTH — Supabase Auth compartilhado com o Suno DataHub (fix 2026-10-01,
+// 2ª rodada -- substitui a 1ª tentativa de Google OAuth próprio E a senha
+// única original). Mesma linha de segurança do sr-gestao-gerencial (outro
+// dashboard Suno já embutido no DataHub):
+//   - O DataHub e os dashboards embutidos usam o MESMO projeto Supabase Auth
+//     (Google OAuth configurado dentro do Supabase, não em cada app).
+//   - Dentro do iframe do DataHub: handshake via postMessage -- o painel pede
+//     a sessão (`EMBED_REQUEST_SESSION`) pro DataHub (window.parent), que já
+//     está logado, e recebe `{ access_token, refresh_token }` de volta. Sem
+//     redirect nenhum (evita o problema do Google recusar renderizar a
+//     própria tela de login dentro de iframe de terceiro).
+//   - Fora do iframe (acesso direto): botão "Entrar com Google" chama
+//     `supabaseClient.auth.signInWithOAuth(...)` -- o Supabase cuida do
+//     redirect/callback inteiro, não temos endpoint de auth próprio.
+// `api/data.js`/`api/ask.js` validam o access_token contra o Supabase
+// (`/auth/v1/user`, ver api/_auth.js) -- nunca decodificam o JWT aqui.
 // ================================================================
-const ACCESS_DENIED_MESSAGE = 'Acesso permitido apenas para contas corporativas Suno.';
+const SUPABASE_URL = 'https://tgmfaugvcsgbbvkmxrdl.supabase.co';
+// Anon key -- pública por design (protegida por RLS no Supabase, não por
+// sigilo), mesmo padrão do sr-gestao-gerencial (NEXT_PUBLIC_SUPABASE_ANON_KEY).
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRnbWZhdWd2Y3NnYmJ2a214cmRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNjA0MTIsImV4cCI6MjA5MDczNjQxMn0.bkEQicvsfie2IknPoFRXNvru2YEmUAagRgRdk1Rxiiw';
+const DATAHUB_URL = 'https://datahub.suno.com.br';
+const EMBED_HANDSHAKE_TIMEOUT_MS = 3000;
 
-function mapAuthError(error) {
-  if (!error) return null;
-  if (error === 'AccessDenied') return ACCESS_DENIED_MESSAGE;
-  if (error === 'Configuration') return 'Erro de configuração do login. Contate o time responsável.';
-  return 'Não foi possível concluir o login. Tente novamente.';
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function isEmbedded() {
+  try { return window.self !== window.top; } catch (e) { return true; }
 }
 
-// Idempotente -- loadData() pode chamar isso de novo (ex.: sessão expirou no
-// meio do uso); não duplica listeners nem reprocessa o ?error= da URL.
+// Pede a sessão pro DataHub via postMessage (só faz sentido se estivermos
+// embutidos). Resolve true se uma sessão válida chegou e foi aplicada,
+// false se não estamos embutidos ou o DataHub não respondeu a tempo.
+function requestEmbeddedSession() {
+  return new Promise((resolve) => {
+    if (!isEmbedded()) { resolve(false); return; }
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) { settled = true; cleanup(); resolve(false); } }, EMBED_HANDSHAKE_TIMEOUT_MS);
+    function onMessage(event) {
+      if (event.origin !== DATAHUB_URL) return; // origem exata -- nunca confiar em postMessage sem checar
+      const session = event.data && event.data.type === 'SUPABASE_SESSION' ? event.data.session : null;
+      if (session && session.access_token && session.refresh_token && !settled) {
+        settled = true;
+        clearTimeout(timer);
+        cleanup();
+        supabaseClient.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token })
+          .then(() => resolve(true))
+          .catch(() => resolve(false));
+      }
+    }
+    function cleanup() { window.removeEventListener('message', onMessage); }
+    window.addEventListener('message', onMessage);
+    window.parent.postMessage({ type: 'EMBED_REQUEST_SESSION' }, DATAHUB_URL);
+  });
+}
+
+// Idempotente -- pode ser chamado de novo (ex.: sessão expirou no meio do
+// uso) sem duplicar listeners.
 let loginScreenReady = false;
 
 function showLoginScreen() {
@@ -841,38 +882,37 @@ function showLoginScreen() {
   if (loginScreenReady) return;
   loginScreenReady = true;
 
-  const params = new URLSearchParams(location.search);
-  const msg = mapAuthError(params.get('error'));
-  if (msg) {
-    const err = document.getElementById('login-error');
-    err.textContent = msg;
-    err.classList.add('visible');
-  }
-
-  // Caminho atual, sem o ?error=..., pra voltar pro lugar certo após o login.
-  params.delete('error');
-  const qs = params.toString();
-  const callbackUrl = location.pathname + (qs ? '?' + qs : '');
-  const loginUrl = '/api/auth/login?callbackUrl=' + encodeURIComponent(callbackUrl || '/');
-
   document.getElementById('btn-login').addEventListener('click', () => {
-    location.href = loginUrl;
+    supabaseClient.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin + window.location.pathname },
+    });
   });
 
-  // O Google recusa renderizar a própria tela de login dentro de um iframe
-  // de terceiro (ex.: embutido no Suno DataHub) -- se já estamos num iframe,
-  // mostra de cara o link pra abrir o login numa aba nova (top-level).
-  let inIframe = false;
-  try { inIframe = window.self !== window.top; } catch (e) { inIframe = true; }
-  if (inIframe) {
+  // Se estivermos embutidos e o handshake com o DataHub falhar/expirar, o
+  // botão "Entrar com Google" aparece, mas clicar nele tentaria navegar o
+  // IFRAME pro Google -- que recusa renderizar sua tela de login pra
+  // terceiros. Mostra o fallback de abrir em nova aba nesse caso.
+  if (isEmbedded()) {
     document.getElementById('login-iframe-hint').style.display = '';
-    document.getElementById('login-newtab').href = new URL(loginUrl, location.origin).toString();
+    document.getElementById('login-newtab').href = window.location.href;
   }
 }
 
-function setupAuth() {
-  // Sem estado de sessão no cliente (cookie é HttpOnly) -- só tenta
-  // carregar; se vier 401, loadData() já chama showLoginScreen().
+// Depois que a tela de login já apareceu uma vez, uma sessão chegando via
+// onAuthStateChange só pode ser o retorno do redirect do Google (fluxo
+// standalone) -- recarrega os dados e esconde a tela.
+supabaseClient.auth.onAuthStateChange((_event, session) => {
+  if (session && loginScreenReady) {
+    loadAndRender().then((ok) => { if (ok) document.getElementById('login-screen').classList.add('hidden'); });
+  }
+});
+
+async function setupAuth() {
+  if (isEmbedded()) {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) await requestEmbeddedSession(); // tenta uma vez antes do primeiro carregamento
+  }
   init();
 }
 
@@ -1306,13 +1346,24 @@ function addMonths(k, n) {
 // ================================================================
 // DATA LOADING
 // ================================================================
+// Headers de auth pra chamadas a /api/* -- anexa o access_token da sessão
+// Supabase atual (vazio se não houver sessão; o servidor responde 401 nesse
+// caso, nunca confiamos só no estado client-side). Usado por loadData() e
+// por submitAI() (aba Pergunte à IA, api/ask.js).
+async function authHeaders() {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+}
+
 async function loadData() {
   setStatus('loading', 'Carregando dados do Snowflake...');
   try {
-    const resp = await fetch(DATA_ENDPOINT);
+    const resp = await fetch(DATA_ENDPOINT, { headers: await authHeaders() });
     if (resp.status === 401) {
-      // Sem sessão (nunca logou) ou sessão expirou -- mostra a tela de login
-      // em vez de recarregar (recarregar bateria 401 de novo, loop infinito).
+      // Sem sessão, sessão expirada, ou e-mail fora do domínio permitido --
+      // desloga (evita ficar preso retentando com uma sessão que o servidor
+      // sempre vai rejeitar) e mostra a tela de login.
+      await supabaseClient.auth.signOut();
       document.getElementById('main-loading').style.display = 'none';
       showLoginScreen();
       return false;
@@ -3828,7 +3879,7 @@ ${buildDataContext()}
 
     const resp = await fetch('/api/ask', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1500,
@@ -4082,10 +4133,10 @@ function bindEvents() {
 // ================================================================
 // INIT
 // ================================================================
-async function init() {
-  buildAllMS();
-  bindEvents();
-
+// Separado de init() pra poder ser chamado de novo quando uma sessão chega
+// tarde (retorno do redirect do Google no fluxo standalone, ver setupAuth())
+// sem reexecutar buildAllMS()/bindEvents() (não são idempotentes).
+async function loadAndRender() {
   const ok = await loadData();
   document.getElementById('main-loading').style.display = 'none';
 
@@ -4098,6 +4149,13 @@ async function init() {
     document.getElementById('btn-refresh').disabled = false;
     render();
   }
+  return ok;
+}
+
+async function init() {
+  buildAllMS();
+  bindEvents();
+  await loadAndRender();
 }
 
 async function refreshData() {

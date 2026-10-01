@@ -5,7 +5,7 @@ export default async function handler(req, res) {
   // qualquer um que descobrisse a URL usava o proxy da Anthropic de graça,
   // na conta da Suno, sem passar pela tela de login. Mesmo gate de sessão
   // de api/data.js (ver api/_auth.js).
-  if (requireSession(req, res)) return;
+  if (await requireSession(req, res)) return;
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
