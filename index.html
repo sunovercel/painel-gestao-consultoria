@@ -902,21 +902,47 @@ function showLoginScreen() {
   }
 }
 
-// Depois que a tela de login já apareceu uma vez, uma sessão chegando via
-// onAuthStateChange só pode ser o retorno do redirect do Google (fluxo
-// standalone) -- recarrega os dados e esconde a tela.
+// Fix (achado em produção, 2026-10-01): NÃO dá pra chamar getSession() de
+// cara e agir na hora -- logo depois do redirect de volta do Google, o
+// token vem no #hash da própria URL, e o supabase-js processa esse hash de
+// forma assíncrona. Chamar getSession()/loadData() antes disso terminar
+// achava "sem sessão", caía em 401, e o signOut() do 401 derrubava a sessão
+// que estava quase pronta -- loop infinito (clica em Entrar -> volta pro
+// Google -> escolhe a conta -> cai nisso de novo).
+// Fix: nunca chama getSession() direto no boot -- só reage ao
+// onAuthStateChange, que dispara uma vez (com `session: null` ou já
+// resolvida, tanto faz) assim que o supabase-js termina de checar
+// storage/hash, e de novo a cada mudança real depois disso.
+let authBootstrapped = false;
+
 supabaseClient.auth.onAuthStateChange((_event, session) => {
+  if (!authBootstrapped) {
+    authBootstrapped = true;
+    bootstrapAuth(session);
+    return;
+  }
+  // Depois do boot, uma sessão chegando só pode ser login concluído no meio
+  // do uso (ex.: usuário clicou Entrar com a tela de login já visível).
   if (session && loginScreenReady) {
     loadAndRender().then((ok) => { if (ok) document.getElementById('login-screen').classList.add('hidden'); });
   }
 });
 
-async function setupAuth() {
+async function bootstrapAuth(session) {
+  if (session) { init(); return; }
+
   if (isEmbedded()) {
-    const { data: { session } } = await supabaseClient.auth.getSession();
-    if (!session) await requestEmbeddedSession(); // tenta uma vez antes do primeiro carregamento
+    const got = await requestEmbeddedSession();
+    if (got) { init(); return; } // requestEmbeddedSession já aplicou a sessão via setSession()
   }
-  init();
+
+  showLoginScreen();
+}
+
+function setupAuth() {
+  // Não faz nada diretamente -- onAuthStateChange (registrado acima, antes
+  // de qualquer chamada) dispara bootstrapAuth() assim que o supabase-js
+  // resolver o estado inicial (storage ou #hash do redirect do Google).
 }
 
 const PALETTE      = ['#C82526','#2D2D2D','#d97706','#7c3aed','#0891b2','#16a34a','#ea580c','#9333ea','#65a30d','#db2777'];
