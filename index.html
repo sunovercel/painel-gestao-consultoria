@@ -885,7 +885,10 @@ function showLoginScreen() {
   document.getElementById('btn-login').addEventListener('click', () => {
     supabaseClient.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin + window.location.pathname },
+      // Sem path/trailing slash -- precisa bater EXATAMENTE com o que está
+      // cadastrado em Redirect URLs no Supabase, senão ele cai pro Site URL
+      // padrão do projeto (que é o do DataHub, não o nosso).
+      options: { redirectTo: window.location.origin },
     });
   });
 
