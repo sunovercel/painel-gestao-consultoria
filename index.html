@@ -1716,15 +1716,31 @@ function filteredTombados() {
 // barra de filtros do dash (data de criação + multiselects) vale nesta aba como nas
 // demais. `venda` = primeira venda do email (por data), fonte das dimensões
 // (source/funil/closer/origem...) para as estratificações.
+// Fix 2026-10-02 (Rafael/Pedro, item 3 do e-mail de 02/10): a "Base Vendas" passa a
+// seguir a MESMA regra do Power BI "Dashboard Aquisição" -- tombamento de aquisição
+// (r.aquisicao: pipeline de vendas, valor de negócio > 0, etapa != RENOVOU, calculado
+// em api/data.js). Setembro/26 sem filtros do dash = 106 implantações / R$ 121.056.700,
+// idêntico ao relatório. O filtro "Tipo de Reunião" NÃO se aplica a esta aba (tipo de
+// reunião não tem relação com PL implantado; com o padrão de 7 tipos ele cortava 10
+// vendas / R$ 7,2M). Os demais filtros globais (Criação, Source, Funil, Closer...)
+// continuam valendo: quando algum está ativo, o tombamento só entra se casar por e-mail
+// com uma venda que passa nesses filtros; sem nenhum ativo, não exige casar com venda.
+function globalFiltersActive() {
+  return !!(F.di || F.df || SEL.source.size || SEL.estrategia.size || SEL.funil.size
+    || SEL.fonteOriginalPipe.size || SEL.canalOriginador.size || SEL.patrimonio.size
+    || SEL.closerResponsavel.size || SEL.sdrResponsavel.size || SEL.complementoEstrategia.size);
+}
+
 function filteredTombamentos() {
   if (!RAW.tombamentos || !RAW.tombamentos.length) return [];
   const todos = STATE.tombScope === 'todos';
-  // Escopo 'vendas' (padrão): match com as vendas FILTRADAS → barra de filtros vale.
+  const filtrosAtivos = !todos && globalFiltersActive();
+  // Escopo 'vendas' (padrão): regra de aquisição do Power BI (+ filtros globais, se ativos).
   // Escopo 'todos': base completa (única visão que inclui emails fora da aba Vendas);
   // filtros globais não se aplicam — a venda (de RAW.vendas) entra só como fonte de
   // dimensão quando existir, senão a linha estratifica como '(Sem venda)'.
   const vendaDe = {}; // email -> { v, d } (primeira venda por data de contratação)
-  (todos ? RAW.vendas : filteredVendas(false)).forEach(v => {
+  (filtrosAtivos ? RAW.vendas.filter(passGlobalVendas) : RAW.vendas).forEach(v => {
     const em = (v.email || '').toLowerCase().trim();
     if (!em) return;
     const d = parseDate(v.data_venda, VENDA_DATE_FMT);
@@ -1736,7 +1752,7 @@ function filteredTombamentos() {
       const m = vendaDe[(r.email || '').toLowerCase().trim()];
       return { row: r, d: parseDate(r.data_de_implantacao, TOMB_DATE_FMT), venda: m ? m.v : null };
     })
-    .filter(x => x.d && (todos || x.venda)
+    .filter(x => x.d && (todos || (x.row.aquisicao && (!filtrosAtivos || x.venda)))
       && (!F.tdi || x.d >= F.tdi) && (!F.tdf || x.d <= F.tdf));
 }
 
@@ -2685,7 +2701,8 @@ function renderTombamento() {
     ? `TODOS os tombamentos — ${rangeTxt}. Única visão que inclui emails fora da aba Vendas; `
       + `filtros do dash não se aplicam aqui. Sem venda correspondente, a linha estratifica como "(Sem venda)".`
     : `PL implantado e valor por data de implantação — ${rangeTxt}. `
-      + `Filtros do dash valem aqui (match com as vendas filtradas); Valor = PL × Taxa (calculado no dash).`;
+      + `Base de aquisição (pipeline de vendas, sem renovação), igual ao Power BI Aquisição. `
+      + `Filtros do dash valem aqui, exceto Tipo de Reunião; Valor = PL × Taxa (calculado no dash).`;
 
   if (bd === 'resumo') renderTombamentoResumo(items);
   else                 renderTombamentoBreakdownTbl(items, bd);

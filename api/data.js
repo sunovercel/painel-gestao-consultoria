@@ -297,6 +297,10 @@ function mapTombamento(r) {
     taxa_fechada: str(r.TAXA_FECHADA), // fonte primária de taxa (sql/021) -- fallback pra taxa_de_adm no painel (tombTaxa())
     data_de_implantacao: str(r.DATA_IMPLANTACAO),
     pl_total_implantado_via_api: str(r.PL_IMPLANTACAO),
+    // Regra de aquisição do Power BI "Dashboard Aquisição" (Pedro, 02/10): pipeline
+    // de vendas, valor de negócio > 0 e etapa diferente de RENOVOU. Validado: setembro/26
+    // = 106 implantações, R$ 121.056.700,06, idêntico ao relatório (sql/052, Q1).
+    aquisicao: Number(r.AQUISICAO) === 1,
   };
 }
 
@@ -451,7 +455,11 @@ async function loadFromSnowflake() {
       EMAIL_CONSULTORIA AS EMAIL,
       TAXA_FECHADA_CONSULTORIA AS TAXA_FECHADA,
       TO_VARCHAR(CADASTRO_DATA_IMPLANTACAO, 'YYYY-MM-DD') AS DATA_IMPLANTACAO,
-      CADASTRO_PL_TOTAL_IMPLANTADO AS PL_IMPLANTACAO
+      CADASTRO_PL_TOTAL_IMPLANTADO AS PL_IMPLANTACAO,
+      CASE WHEN PIPE_VENDAS = 'SIM'
+                AND AMOUNT_FUNIL > 0
+                AND UPPER(COALESCE(ETAPA_DO_NEGOCIO_CONSULTORIA, '')) <> 'RENOVOU'
+           THEN 1 ELSE 0 END AS AQUISICAO
     FROM SERVING_LAYER.CONSULTORIA.VW_FUNIL_CONSULTORIA_SALESFORCE_HUBSPOT
     WHERE TOMBOU = 'SIM'
   `);
